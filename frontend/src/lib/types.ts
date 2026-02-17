@@ -14,6 +14,7 @@ export interface Mod {
   size_in_bytes: number | null;
   latest_file_id: number | null;
   latest_version: string | null;
+  latest_file_name: string | null;
   version: string | null;
   mod_name: string | null;
   author: string | null;

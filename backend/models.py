@@ -29,6 +29,8 @@ class Mod(BaseModel):
     size_in_bytes: Optional[int] = None
     latest_file_id: Optional[int] = None
     latest_version: Optional[str] = None
+    latest_file_name: Optional[str] = None
+    local_file_mtime: Optional[datetime] = None
     version: Optional[str] = None
     mod_name: Optional[str] = None
     author: Optional[str] = None

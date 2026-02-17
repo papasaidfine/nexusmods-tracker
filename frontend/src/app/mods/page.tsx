@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { useMods } from "@/hooks/use-mods";
-import { updatesApi } from "@/lib/api";
+import { updatesApi, localFilesApi } from "@/lib/api";
 import { ModTable } from "@/components/mods/mod-table";
 import { AddModDialog } from "@/components/mods/add-mod-dialog";
 import { Button } from "@/components/ui/button";
@@ -14,11 +14,30 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Loader2Icon, RefreshCwIcon } from "lucide-react";
+import { Loader2Icon, RefreshCwIcon, ScanSearchIcon } from "lucide-react";
 
 export default function ModsPage() {
   const { mods, isLoading, isError, mutate } = useMods();
   const [checkingAll, setCheckingAll] = useState(false);
+  const [detecting, setDetecting] = useState(false);
+
+  const handleAutoDetect = async () => {
+    setDetecting(true);
+    try {
+      const result = await localFilesApi.autoDetect();
+      if (result.updated === 0) {
+        toast.info("No new downloads detected");
+      } else {
+        const names = result.details.map(d => d.mod_name || d.new_file).join(", ");
+        toast.success(`Auto-updated ${result.updated} mod(s): ${names}`);
+      }
+      mutate();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Auto-detect failed");
+    } finally {
+      setDetecting(false);
+    }
+  };
 
   const handleCheckAll = async () => {
     setCheckingAll(true);
@@ -70,6 +89,18 @@ export default function ModsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={handleAutoDetect}
+            disabled={detecting}
+          >
+            {detecting ? (
+              <Loader2Icon className="animate-spin" />
+            ) : (
+              <ScanSearchIcon />
+            )}
+            {detecting ? "Detecting..." : "Auto-Detect Updates"}
+          </Button>
           <Button
             variant="outline"
             onClick={handleCheckAll}

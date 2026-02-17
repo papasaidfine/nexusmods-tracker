@@ -86,6 +86,10 @@ def _migrate_schema(conn):
         conn.execute("ALTER TABLE mods ADD COLUMN latest_file_id INTEGER")
     if 'latest_version' not in cols:
         conn.execute("ALTER TABLE mods ADD COLUMN latest_version TEXT")
+    if 'latest_file_name' not in cols:
+        conn.execute("ALTER TABLE mods ADD COLUMN latest_file_name TEXT")
+    if 'local_file_mtime' not in cols:
+        conn.execute("ALTER TABLE mods ADD COLUMN local_file_mtime TIMESTAMP")
 
 def init_db():
     """Initialize database tables"""
@@ -111,6 +115,8 @@ def init_db():
                     size_in_bytes INTEGER,
                     latest_file_id INTEGER,
                     latest_version TEXT,
+                    latest_file_name TEXT,
+                    local_file_mtime TIMESTAMP,
                     version TEXT,
                     mod_name TEXT,
                     author TEXT,
@@ -149,8 +155,9 @@ def create_mod(mod_data: dict) -> dict:
             INSERT INTO mods (
                 local_file, mod_id, file_id, game,
                 name, file_name, description, size_in_bytes,
-                version, mod_name, author, category_name, uploaded_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                version, mod_name, author, category_name, uploaded_time,
+                local_file_mtime
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             mod_data['local_file'],
             mod_data['mod_id'],
@@ -165,6 +172,7 @@ def create_mod(mod_data: dict) -> dict:
             mod_data.get('author'),
             mod_data.get('category_name'),
             mod_data.get('uploaded_time'),
+            mod_data.get('local_file_mtime'),
         ))
         conn.commit()
         return get_mod_by_id(cursor.lastrowid)

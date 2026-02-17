@@ -84,6 +84,11 @@ export const modsApi = {
     fetchApi<{ message: string }>(`/api/mods/${id}`, {
       method: "DELETE",
     }),
+
+  markUpdated: (id: number) =>
+    fetchApi<Mod>(`/api/mods/${id}/mark-updated`, {
+      method: "POST",
+    }),
 };
 
 /**
@@ -96,6 +101,12 @@ export const localFilesApi = {
     fetchApi<ScanResult>("/api/local-files/scan", {
       method: "POST",
     }),
+
+  autoDetect: () =>
+    fetchApi<{ updated: number; details: Array<{ mod_id: number; mod_name: string; old_file: string; new_file: string; version: string }> }>(
+      "/api/local-files/auto-detect",
+      { method: "POST" }
+    ),
 };
 
 /**
@@ -108,16 +119,6 @@ export const updatesApi = {
     fetchApi<UpdateInfo>(`/api/updates/check/${id}`),
 };
 
-/**
- * Downloads API
- */
-export const downloadsApi = {
-  downloadUpdate: (id: number) =>
-    fetchApi<{ success: boolean; filename: string; path: string }>(
-      `/api/downloads/${id}`,
-      { method: "POST" }
-    ),
-};
 
 /**
  * Health Check

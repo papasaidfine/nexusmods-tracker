@@ -6,7 +6,7 @@ import { format, formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 import { useMod } from "@/hooks/use-mods";
 import { checkSingleUpdate } from "@/hooks/use-updates";
-import { modsApi, downloadsApi } from "@/lib/api";
+import { modsApi } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { UpdateBadge } from "@/components/mods/update-badge";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   ArrowLeftIcon,
-  DownloadIcon,
+  CheckCircleIcon,
   ExternalLinkIcon,
   Loader2Icon,
   RefreshCwIcon,
@@ -77,20 +77,20 @@ export default function ModDetailPage({
   const router = useRouter();
   const { mod, isLoading, isError, mutate } = useMod(modId);
   const [checking, setChecking] = useState(false);
-  const [downloading, setDownloading] = useState(false);
+  const [marking, setMarking] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const handleDownload = async () => {
-    setDownloading(true);
+  const handleMarkUpdated = async () => {
+    setMarking(true);
     try {
-      const result = await downloadsApi.downloadUpdate(modId);
-      toast.success(`Downloaded: ${result.filename}`);
+      await modsApi.markUpdated(modId);
+      toast.success("Marked as updated");
       mutate();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Download failed");
+      toast.error(error instanceof Error ? error.message : "Failed to mark as updated");
     } finally {
-      setDownloading(false);
+      setMarking(false);
     }
   };
 
@@ -242,9 +242,9 @@ export default function ModDetailPage({
 
       <div className="flex items-center gap-2">
         {mod.update_available && (
-          <Button onClick={handleDownload} disabled={downloading}>
-            {downloading ? <Loader2Icon className="animate-spin" /> : <DownloadIcon />}
-            {downloading ? "Downloading…" : "Download Update"}
+          <Button onClick={handleMarkUpdated} disabled={marking}>
+            {marking ? <Loader2Icon className="animate-spin" /> : <CheckCircleIcon />}
+            {marking ? "Marking..." : "Mark as Updated"}
           </Button>
         )}
         <Button variant="outline" onClick={handleCheckUpdate} disabled={checking}>

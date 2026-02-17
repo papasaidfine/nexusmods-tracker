@@ -40,6 +40,10 @@ class NexusmodsClient:
         """Untrack a mod on Nexusmods"""
         self.client.user_tracked_delete(game, str(mod_id))
 
+    def get_updated_mods(self, game: str, period: str) -> List[Dict]:
+        """Get mods updated in a given period. Period: '1d', '1w', or '1m'."""
+        return self.client.game_updated_list(game, period)
+
     def get_download_link(self, game: str, mod_id: int, file_id: int) -> str:
         """Generate download link (requires premium for direct download)"""
         # For non-premium users, return the web page URL
