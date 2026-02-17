@@ -1,0 +1,55 @@
+# .gitignore
+
+# Environment
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# uv
+.python-version
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/.pnpm-store/
+
+# Playwright
+playwright-report/
+test-results/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Misc scripts (exploration/one-offs)
+explore_nexusmods.py
+fetch_tracked_mods.py
+main.py
+mod_tracker.py
+summary.py
+test_search_api.py
+mod_metadata.json
+tracked_mods.json
+
+# Plan files
+FRONTEND_PLAN.md

@@ -1,0 +1,19 @@
+# Ignore database files (now stored in mods folder parent directory)
+tracker.db
+tracker.db-journal
+nexusmods_tracker.db
+nexusmods_tracker.db-journal
+*.db
+*.db-journal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
