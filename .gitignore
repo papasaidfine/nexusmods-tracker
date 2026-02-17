@@ -44,7 +44,7 @@ Thumbs.db
 # Misc scripts (exploration/one-offs)
 explore_nexusmods.py
 fetch_tracked_mods.py
-main.py
+/main.py
 mod_tracker.py
 summary.py
 test_search_api.py
