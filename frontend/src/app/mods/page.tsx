@@ -136,20 +136,22 @@ export default function ModsPage() {
             )}
             {checkingAll ? "Checking..." : "Check All Updates"}
           </Button>
-          {orphanCount > 0 && (
-            <Button
-              variant="outline"
-              onClick={handleCleanup}
-              disabled={cleaningUp}
-            >
-              {cleaningUp ? (
-                <Loader2Icon className="animate-spin" />
-              ) : (
-                <Trash2Icon />
-              )}
-              {cleaningUp ? "Cleaning..." : `Cleanup ${orphanCount} orphan${orphanCount > 1 ? "s" : ""}`}
-            </Button>
-          )}
+          <Button
+            variant={orphanCount > 0 ? "destructive" : "outline"}
+            onClick={handleCleanup}
+            disabled={cleaningUp}
+          >
+            {cleaningUp ? (
+              <Loader2Icon className="animate-spin" />
+            ) : (
+              <Trash2Icon />
+            )}
+            {cleaningUp
+              ? "Cleaning..."
+              : orphanCount > 0
+                ? `Cleanup ${orphanCount} orphan${orphanCount > 1 ? "s" : ""}`
+                : "Cleanup"}
+          </Button>
           <AddModDialog onModAdded={() => mutate()} />
         </div>
       </div>
