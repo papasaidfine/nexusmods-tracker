@@ -11,10 +11,17 @@ from nexusmods_client import get_nexusmods_client
 
 router = APIRouter()
 
-@router.get("/", response_model=List[Mod])
+@router.get("/")
 def list_mods():
     """List all tracked mods"""
-    return get_all_mods()
+    mods = get_all_mods()
+    mods_dir = os.getenv("MODS_DIR", "")
+    for mod in mods:
+        if mods_dir and mod.get("local_file"):
+            mod["file_exists"] = os.path.exists(os.path.join(mods_dir, mod["local_file"]))
+        else:
+            mod["file_exists"] = None
+    return mods
 
 @router.post("/", response_model=Mod)
 def add_mod(mod_create: ModCreate):
@@ -58,7 +65,9 @@ def add_mod(mod_create: ModCreate):
         return create_mod(mod_data)
     except Exception as e:
         if 'UNIQUE constraint' in str(e):
-            raise HTTPException(status_code=400, detail="Mod with this local file already exists")
+            if 'mod_id' in str(e) or 'uq_mod_file' in str(e):
+                raise HTTPException(status_code=400, detail="This mod file (mod_id + file_id) is already registered")
+            raise HTTPException(status_code=400, detail="A mod with this local file already exists")
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/refresh-all", response_model=List[Mod])
@@ -86,6 +95,23 @@ def refresh_all_metadata():
             print(f"Failed to refresh mod {mod['id']}: {e}")
             results.append(mod)
     return results
+
+@router.post("/cleanup")
+def cleanup_orphans():
+    """Remove tracked mods whose local file no longer exists on disk"""
+    mods_dir = os.getenv("MODS_DIR", "")
+    if not mods_dir:
+        raise HTTPException(status_code=500, detail="MODS_DIR not configured")
+
+    mods = get_all_mods()
+    removed = []
+    for mod in mods:
+        local_file = mod.get("local_file")
+        if local_file and not os.path.exists(os.path.join(mods_dir, local_file)):
+            delete_mod(mod["id"])
+            removed.append({"id": mod["id"], "local_file": local_file, "mod_name": mod.get("mod_name")})
+
+    return {"removed": len(removed), "details": removed}
 
 @router.get("/{mod_db_id}", response_model=Mod)
 def get_mod(mod_db_id: int):
@@ -204,7 +230,20 @@ def mark_mod_updated(mod_db_id: int):
 
 @router.delete("/{mod_db_id}")
 def remove_mod(mod_db_id: int):
-    """Remove a tracked mod"""
-    if not delete_mod(mod_db_id):
+    """Remove a tracked mod and its local file"""
+    mod = get_mod_by_id(mod_db_id)
+    if not mod:
         raise HTTPException(status_code=404, detail="Mod not found")
+
+    # Delete local file from disk
+    mods_dir = os.getenv("MODS_DIR", "")
+    if mods_dir and mod.get("local_file"):
+        file_path = os.path.join(mods_dir, mod["local_file"])
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except OSError as e:
+                print(f"[delete] Failed to delete {mod['local_file']}: {e}")
+
+    delete_mod(mod_db_id)
     return {"message": "Mod deleted successfully"}

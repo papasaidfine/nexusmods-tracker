@@ -4,7 +4,11 @@ Nexusmods Tracker - FastAPI Backend
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import os
 import uvicorn
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from database import init_db
 from routers import mods, local_files, updates, nexusmods_api
@@ -43,6 +47,10 @@ def root():
         "message": "Nexusmods Tracker API",
         "docs": "/docs"
     }
+
+@app.get("/api/config")
+def get_config():
+    return {"game": os.getenv("GAME", "monsterhunterwilds")}
 
 @app.get("/health")
 def health():

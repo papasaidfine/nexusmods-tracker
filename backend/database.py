@@ -91,6 +91,13 @@ def _migrate_schema(conn):
     if 'local_file_mtime' not in cols:
         conn.execute("ALTER TABLE mods ADD COLUMN local_file_mtime TIMESTAMP")
 
+    # Add unique index on (mod_id, file_id) if not already present
+    existing_indexes = {
+        row[1] for row in conn.execute("PRAGMA index_list(mods)").fetchall()
+    }
+    if 'uq_mod_file' not in existing_indexes:
+        conn.execute("CREATE UNIQUE INDEX uq_mod_file ON mods (mod_id, file_id)")
+
 def init_db():
     """Initialize database tables"""
     with get_db() as conn:
@@ -125,7 +132,8 @@ def init_db():
                     last_checked TIMESTAMP,
                     update_available BOOLEAN DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(mod_id, file_id)
                 )
             """)
         conn.commit()

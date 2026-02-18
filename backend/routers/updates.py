@@ -125,12 +125,14 @@ def check_all_updates():
             # Fallback: check all mods for this game
             updated_mod_ids.update(mod["mod_id"] for mod in game_mods)
 
-    # Only check mods whose mod_id appeared in the batch response
+    # Check mods whose mod_id appeared in the batch response,
+    # and always check mods that have never been checked before
     updates = []
     checked = 0
     skipped = 0
     for mod in mods:
-        if mod["mod_id"] not in updated_mod_ids:
+        never_checked = not mod.get("last_checked")
+        if not never_checked and mod["mod_id"] not in updated_mod_ids:
             skipped += 1
             continue
         checked += 1

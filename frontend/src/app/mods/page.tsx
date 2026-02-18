@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useMods } from "@/hooks/use-mods";
-import { updatesApi, localFilesApi } from "@/lib/api";
+import { modsApi, updatesApi, localFilesApi } from "@/lib/api";
 import { ModTable } from "@/components/mods/mod-table";
 import { AddModDialog } from "@/components/mods/add-mod-dialog";
 import { Button } from "@/components/ui/button";
@@ -14,12 +14,35 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Loader2Icon, RefreshCwIcon, ScanSearchIcon } from "lucide-react";
+import { Loader2Icon, RefreshCwIcon, ScanSearchIcon, Trash2Icon } from "lucide-react";
 
 export default function ModsPage() {
   const { mods, isLoading, isError, mutate } = useMods();
   const [checkingAll, setCheckingAll] = useState(false);
   const [detecting, setDetecting] = useState(false);
+  const [cleaningUp, setCleaningUp] = useState(false);
+
+  const orphanCount = useMemo(
+    () => mods?.filter((m) => m.file_exists === false).length ?? 0,
+    [mods]
+  );
+
+  const handleCleanup = async () => {
+    setCleaningUp(true);
+    try {
+      const result = await modsApi.cleanup();
+      if (result.removed === 0) {
+        toast.info("No orphaned entries found");
+      } else {
+        toast.success(`Removed ${result.removed} orphaned entry/entries`);
+      }
+      mutate();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Cleanup failed");
+    } finally {
+      setCleaningUp(false);
+    }
+  };
 
   const handleAutoDetect = async () => {
     setDetecting(true);
@@ -113,6 +136,20 @@ export default function ModsPage() {
             )}
             {checkingAll ? "Checking..." : "Check All Updates"}
           </Button>
+          {orphanCount > 0 && (
+            <Button
+              variant="outline"
+              onClick={handleCleanup}
+              disabled={cleaningUp}
+            >
+              {cleaningUp ? (
+                <Loader2Icon className="animate-spin" />
+              ) : (
+                <Trash2Icon />
+              )}
+              {cleaningUp ? "Cleaning..." : `Cleanup ${orphanCount} orphan${orphanCount > 1 ? "s" : ""}`}
+            </Button>
+          )}
           <AddModDialog onModAdded={() => mutate()} />
         </div>
       </div>

@@ -9,6 +9,8 @@ import type {
   LocalFile,
   UpdateInfo,
   ScanResult,
+  NexusmodsMod,
+  NexusmodsFile,
 } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -85,6 +87,12 @@ export const modsApi = {
       method: "DELETE",
     }),
 
+  cleanup: () =>
+    fetchApi<{ removed: number; details: Array<{ id: number; local_file: string; mod_name: string | null }> }>(
+      "/api/mods/cleanup",
+      { method: "POST" }
+    ),
+
   markUpdated: (id: number) =>
     fetchApi<Mod>(`/api/mods/${id}/mark-updated`, {
       method: "POST",
@@ -119,6 +127,24 @@ export const updatesApi = {
     fetchApi<UpdateInfo>(`/api/updates/check/${id}`),
 };
 
+
+/**
+ * Nexusmods API (direct)
+ */
+export const nexusmodsApi = {
+  getMod: (game: string, modId: number) =>
+    fetchApi<NexusmodsMod>(`/api/nexusmods/mods/${game}/${modId}`),
+
+  getFiles: (game: string, modId: number) =>
+    fetchApi<NexusmodsFile[]>(`/api/nexusmods/files/${game}/${modId}`),
+};
+
+/**
+ * Config API
+ */
+export const configApi = {
+  get: () => fetchApi<{ game: string }>("/api/config"),
+};
 
 /**
  * Health Check

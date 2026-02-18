@@ -1,10 +1,11 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import { formatDistanceToNow, format } from "date-fns";
 import { toast } from "sonner";
 import { modsApi } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import type { Mod } from "@/lib/types";
 import { UpdateBadge } from "@/components/mods/update-badge";
 import { Button } from "@/components/ui/button";
@@ -18,8 +19,10 @@ import {
 } from "@/components/ui/table";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -31,7 +34,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import {
+  AlertTriangleIcon,
   ArrowUpDownIcon,
   ArrowUpIcon,
   ArrowDownIcon,
@@ -41,8 +46,10 @@ import {
   ChevronsUpDownIcon,
   DownloadIcon,
   EyeIcon,
+  FilterIcon,
   Loader2Icon,
   MoreHorizontalIcon,
+  SearchIcon,
   Trash2Icon,
 } from "lucide-react";
 
@@ -55,7 +62,6 @@ type SortField =
   | "mod_name"
   | "author"
   | "version"
-  | "file_id"
   | "category_name"
   | "uploaded_time"
   | "last_checked"
@@ -91,6 +97,31 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<Mod | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<Set<string>>(new Set());
+  const [authorFilter, setAuthorFilter] = useState<Set<string>>(new Set());
+  const [statusFilter, setStatusFilter] = useState<"all" | "update" | "current">("all");
+
+  // Compute distinct values for filter dropdowns
+  const distinctCategories = useMemo(
+    () => [...new Set(mods.map((m) => m.category_name).filter(Boolean))] as string[],
+    [mods]
+  );
+  const distinctAuthors = useMemo(
+    () => [...new Set(mods.map((m) => m.author).filter(Boolean))].sort() as string[],
+    [mods]
+  );
+
+  const activeFilterCount =
+    (categoryFilter.size > 0 ? 1 : 0) +
+    (authorFilter.size > 0 ? 1 : 0) +
+    (statusFilter !== "all" ? 1 : 0);
+
+  const clearAllFilters = () => {
+    setCategoryFilter(new Set());
+    setAuthorFilter(new Set());
+    setStatusFilter("all");
+  };
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -101,7 +132,28 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
     }
   };
 
-  const sortedMods = [...mods].sort((a, b) => {
+  const searchLower = search.toLowerCase();
+  const searchedMods = search
+    ? mods.filter((m) => {
+        return (
+          (m.name && m.name.toLowerCase().includes(searchLower)) ||
+          (m.mod_name && m.mod_name.toLowerCase().includes(searchLower)) ||
+          (m.local_file && m.local_file.toLowerCase().includes(searchLower)) ||
+          (m.author && m.author.toLowerCase().includes(searchLower)) ||
+          (m.version && m.version.toLowerCase().includes(searchLower))
+        );
+      })
+    : mods;
+
+  const filteredMods = searchedMods.filter((m) => {
+    if (categoryFilter.size > 0 && !categoryFilter.has(m.category_name || "")) return false;
+    if (authorFilter.size > 0 && !authorFilter.has(m.author || "")) return false;
+    if (statusFilter === "update" && !m.update_available) return false;
+    if (statusFilter === "current" && m.update_available) return false;
+    return true;
+  });
+
+  const sortedMods = [...filteredMods].sort((a, b) => {
     const dir = sortDirection === "asc" ? 1 : -1;
     const aVal = a[sortField];
     const bVal = b[sortField];
@@ -200,6 +252,54 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
     );
   };
 
+  const FilterableHeader = ({
+    field,
+    children,
+    filterContent,
+    isFiltered,
+  }: {
+    field: SortField;
+    children: React.ReactNode;
+    filterContent: React.ReactNode;
+    isFiltered: boolean;
+  }) => {
+    const isActive = sortField === field;
+    return (
+      <TableHead>
+        <div className="flex items-center gap-0.5">
+          <button
+            className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
+            onClick={() => handleSort(field)}
+          >
+            {children}
+            {isActive ? (
+              sortDirection === "asc" ? (
+                <ArrowUpIcon className="size-3" />
+              ) : (
+                <ArrowDownIcon className="size-3" />
+              )
+            ) : (
+              <ArrowUpDownIcon className="size-3 opacity-40" />
+            )}
+          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className={cn(
+                "p-0.5 rounded hover:bg-muted transition-colors",
+                isFiltered ? "text-primary" : "text-muted-foreground opacity-40 hover:opacity-100"
+              )}>
+                <FilterIcon className="size-3" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {filterContent}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </TableHead>
+    );
+  };
+
   if (mods.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
@@ -223,7 +323,22 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
 
   return (
     <>
-      <div className="flex justify-end mb-2">
+      <div className="flex items-center justify-between mb-2">
+        <div className="relative w-64">
+          <SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <Input
+            placeholder="Search mods..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 h-8"
+          />
+        </div>
+        {activeFilterCount > 0 && (
+          <Button variant="ghost" size="sm" onClick={clearAllFilters}>
+            <FilterIcon className="size-4" />
+            Clear {activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""}
+          </Button>
+        )}
         <Button variant="ghost" size="sm" onClick={toggleCollapseAll}>
           {allCollapsed ? (
             <ChevronsUpDownIcon className="size-4" />
@@ -238,11 +353,117 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
           <TableRow>
             <SortableHeader field="mod_name">File</SortableHeader>
             <SortableHeader field="version">Version</SortableHeader>
-            <SortableHeader field="file_id">File ID</SortableHeader>
-            <SortableHeader field="category_name">Category</SortableHeader>
+            <FilterableHeader
+              field="author"
+              isFiltered={authorFilter.size > 0}
+              filterContent={
+                <>
+                  <DropdownMenuLabel>Filter by Author</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <div className="max-h-56 overflow-auto">
+                    {distinctAuthors.map((author) => (
+                      <DropdownMenuCheckboxItem
+                        key={author}
+                        checked={authorFilter.has(author)}
+                        onCheckedChange={() => {
+                          setAuthorFilter((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(author)) next.delete(author);
+                            else next.add(author);
+                            return next;
+                          });
+                        }}
+                        onSelect={(e) => e.preventDefault()}
+                      >
+                        {author}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </div>
+                  {authorFilter.size > 0 && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => setAuthorFilter(new Set())}>
+                        Clear
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </>
+              }
+            >
+              Author
+            </FilterableHeader>
+            <FilterableHeader
+              field="category_name"
+              isFiltered={categoryFilter.size > 0}
+              filterContent={
+                <>
+                  <DropdownMenuLabel>Filter by Category</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {distinctCategories.map((cat) => (
+                    <DropdownMenuCheckboxItem
+                      key={cat}
+                      checked={categoryFilter.has(cat)}
+                      onCheckedChange={() => {
+                        setCategoryFilter((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(cat)) next.delete(cat);
+                          else next.add(cat);
+                          return next;
+                        });
+                      }}
+                      onSelect={(e) => e.preventDefault()}
+                    >
+                      {cat}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                  {categoryFilter.size > 0 && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => setCategoryFilter(new Set())}>
+                        Clear
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </>
+              }
+            >
+              Category
+            </FilterableHeader>
             <SortableHeader field="uploaded_time">Uploaded</SortableHeader>
             <SortableHeader field="last_checked">Last Checked</SortableHeader>
-            <SortableHeader field="update_available">Status</SortableHeader>
+            <FilterableHeader
+              field="update_available"
+              isFiltered={statusFilter !== "all"}
+              filterContent={
+                <>
+                  <DropdownMenuLabel>Filter by Status</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuCheckboxItem
+                    checked={statusFilter === "all"}
+                    onCheckedChange={() => setStatusFilter("all")}
+                    onSelect={(e) => e.preventDefault()}
+                  >
+                    All
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
+                    checked={statusFilter === "update"}
+                    onCheckedChange={() => setStatusFilter("update")}
+                    onSelect={(e) => e.preventDefault()}
+                  >
+                    Update Available
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem
+                    checked={statusFilter === "current"}
+                    onCheckedChange={() => setStatusFilter("current")}
+                    onSelect={(e) => e.preventDefault()}
+                  >
+                    Up to Date
+                  </DropdownMenuCheckboxItem>
+                </>
+              }
+            >
+              Status
+            </FilterableHeader>
             <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
@@ -318,20 +539,27 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
               {!collapsedGroups.has(group.modId) && group.files.map((mod) => (
                 <TableRow key={mod.id}>
                   <TableCell className="max-w-[240px] pl-6">
-                    <Link
-                      href={`/mods/${mod.id}`}
-                      className="hover:underline text-foreground font-medium block truncate"
-                    >
-                      {mod.name || mod.local_file}
-                    </Link>
+                    <div className="flex items-center gap-1.5">
+                      <Link
+                        href={`/mods/${mod.id}`}
+                        className="hover:underline text-foreground font-medium block truncate"
+                      >
+                        {mod.name || mod.local_file}
+                      </Link>
+                      {mod.file_exists === false && (
+                        <span className="text-destructive shrink-0" title="Local file missing from disk">
+                          <AlertTriangleIcon className="size-3.5" />
+                        </span>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
                       {mod.version || "—"}
                     </code>
                   </TableCell>
-                  <TableCell className="text-muted-foreground tabular-nums">
-                    {mod.file_id}
+                  <TableCell className="text-muted-foreground">
+                    {mod.author || "—"}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {mod.category_name || "—"}

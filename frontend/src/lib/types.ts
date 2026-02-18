@@ -22,6 +22,7 @@ export interface Mod {
   uploaded_time: string | null;
   last_checked: string | null;
   update_available: boolean;
+  file_exists: boolean | null;
   created_at: string;
   updated_at: string;
 }
