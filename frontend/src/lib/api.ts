@@ -110,6 +110,11 @@ export const localFilesApi = {
       method: "POST",
     }),
 
+  delete: (filename: string) =>
+    fetchApi<{ message: string }>(`/api/local-files/${encodeURIComponent(filename)}`, {
+      method: "DELETE",
+    }),
+
   autoDetect: () =>
     fetchApi<{ updated: number; details: Array<{ mod_id: number; mod_name: string; old_file: string; new_file: string; version: string }> }>(
       "/api/local-files/auto-detect",

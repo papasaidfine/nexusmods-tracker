@@ -61,6 +61,19 @@ def scan_mods_directory():
     }
 
 
+@router.delete("/{filename:path}")
+def delete_local_file(filename: str):
+    """Delete a local file from the mods directory"""
+    mods_dir = get_mods_directory()
+    file_path = os.path.join(mods_dir, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        os.remove(file_path)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete file: {e}")
+    return {"message": f"Deleted {filename}"}
+
 @router.post("/auto-detect")
 def auto_detect_updates():
     """

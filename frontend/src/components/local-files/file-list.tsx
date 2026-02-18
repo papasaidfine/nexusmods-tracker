@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { toast } from "sonner";
+import { localFilesApi } from "@/lib/api";
 import type { LocalFile, Mod } from "@/lib/types";
 import { formatFileSize } from "@/lib/utils";
 import { MapFileDialog } from "@/components/local-files/map-file-dialog";
@@ -15,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Input } from "@/components/ui/input";
 import {
   ArrowUpDownIcon,
   ArrowUpIcon,
@@ -24,6 +27,8 @@ import {
   EyeIcon,
   FileArchiveIcon,
   LinkIcon,
+  SearchIcon,
+  Trash2Icon,
 } from "lucide-react";
 
 interface FileListProps {
@@ -41,6 +46,7 @@ export function FileList({ files, mods, onMutate }: FileListProps) {
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [filter, setFilter] = useState<FilterMode>("all");
   const [mapTarget, setMapTarget] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -56,7 +62,9 @@ export function FileList({ files, mods, onMutate }: FileListProps) {
     modsByFile.set(mod.local_file, mod);
   }
 
+  const searchLower = search.toLowerCase();
   const filteredFiles = files.filter((f) => {
+    if (search && !f.filename.toLowerCase().includes(searchLower)) return false;
     if (filter === "mapped") return f.mapped;
     if (filter === "unmapped") return !f.mapped;
     return true;
@@ -122,6 +130,16 @@ export function FileList({ files, mods, onMutate }: FileListProps) {
     <>
       {/* Filter bar */}
       <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+        <div className="relative w-64">
+          <SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <Input
+            placeholder="Search files..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 h-8"
+          />
+        </div>
         <div className="flex items-center gap-1 rounded-lg border p-1 bg-muted/50">
           {(["all", "mapped", "unmapped"] as const).map((mode) => (
             <button
@@ -138,6 +156,7 @@ export function FileList({ files, mods, onMutate }: FileListProps) {
               {mode === "unmapped" && `Unmapped (${unmappedCount})`}
             </button>
           ))}
+        </div>
         </div>
         <p className="text-sm text-muted-foreground">
           Showing {filteredFiles.length} of {files.length} files
@@ -210,23 +229,40 @@ export function FileList({ files, mods, onMutate }: FileListProps) {
                   )}
                 </TableCell>
                 <TableCell className="text-right">
-                  {file.mapped && linkedMod ? (
-                    <Button variant="ghost" size="xs" asChild>
-                      <Link href={`/mods/${linkedMod.id}`}>
-                        <EyeIcon />
-                        View Mod
-                      </Link>
-                    </Button>
-                  ) : (
+                  <div className="flex items-center justify-end gap-1">
+                    {file.mapped && linkedMod ? (
+                      <Button variant="ghost" size="xs" asChild>
+                        <Link href={`/mods/${linkedMod.id}`}>
+                          <EyeIcon />
+                          View Mod
+                        </Link>
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        onClick={() => setMapTarget(file.filename)}
+                      >
+                        <LinkIcon />
+                        Map File
+                      </Button>
+                    )}
                     <Button
-                      variant="outline"
-                      size="xs"
-                      onClick={() => setMapTarget(file.filename)}
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={async () => {
+                        try {
+                          await localFilesApi.delete(file.filename);
+                          toast.success(`Deleted ${file.filename}`);
+                          onMutate();
+                        } catch (error) {
+                          toast.error(error instanceof Error ? error.message : "Failed to delete");
+                        }
+                      }}
                     >
-                      <LinkIcon />
-                      Map File
+                      <Trash2Icon className="text-destructive" />
                     </Button>
-                  )}
+                  </div>
                 </TableCell>
               </TableRow>
             );
