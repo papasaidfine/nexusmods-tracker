@@ -147,10 +147,10 @@ export default function ModsPage() {
               <Trash2Icon />
             )}
             {cleaningUp
-              ? "Cleaning..."
+              ? "Removing..."
               : orphanCount > 0
-                ? `Cleanup ${orphanCount} orphan${orphanCount > 1 ? "s" : ""}`
-                : "Cleanup"}
+                ? `Remove ${orphanCount} missing`
+                : "Remove Missing"}
           </Button>
           <AddModDialog onModAdded={() => mutate()} />
         </div>
