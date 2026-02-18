@@ -24,12 +24,17 @@ def check_mod_update(mod: dict) -> dict:
             if f.get('category_name') not in ['ARCHIVED', 'OLD_VERSION']
         ]
 
-        # Filter files by name (used to distinguish multiple files under the same mod)
-        pattern = mod.get('name', '')
-        if pattern:
-            matching_files = [f for f in active_files if pattern in f.get('name', '')]
-        else:
-            matching_files = active_files
+        if not active_files:
+            return None
+
+        # Match by exact name first, then fall back to same category
+        current_name = mod.get('name', '')
+        current_category = mod.get('category_name', '')
+
+        matching_files = [f for f in active_files if f.get('name', '') == current_name]
+
+        if not matching_files and current_category:
+            matching_files = [f for f in active_files if f.get('category_name', '') == current_category]
 
         if not matching_files:
             return None

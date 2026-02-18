@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Fragment, useState, useEffect } from "react";
 import { toast } from "sonner";
 import { modsApi, nexusmodsApi, configApi } from "@/lib/api";
 import type { NexusmodsMod, NexusmodsFile } from "@/lib/types";
@@ -30,7 +30,18 @@ interface AddModDialogProps {
   onModAdded: () => void;
 }
 
+interface ModFile extends NexusmodsFile {
+  mod_id: number;
+}
+
+interface LookedUpMod {
+  info: NexusmodsMod;
+  files: ModFile[];
+}
+
 type Step = 1 | 2 | 3;
+
+type RegResult = { file: ModFile; success: boolean; error?: string };
 
 export function AddModDialog({ onModAdded }: AddModDialogProps) {
   const [open, setOpen] = useState(false);
@@ -38,98 +49,112 @@ export function AddModDialog({ onModAdded }: AddModDialogProps) {
   const [game, setGame] = useState("");
   const [modIdInput, setModIdInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [modInfo, setModInfo] = useState<NexusmodsMod | null>(null);
-  const [files, setFiles] = useState<NexusmodsFile[]>([]);
-  const [selectedFileIds, setSelectedFileIds] = useState<Set<number>>(new Set());
+  const [lookedUp, setLookedUp] = useState<LookedUpMod[]>([]);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [registering, setRegistering] = useState(false);
-  const [results, setResults] = useState<{ file: NexusmodsFile; success: boolean; error?: string }[]>([]);
+  const [results, setResults] = useState<RegResult[]>([]);
 
-  // Load game config on mount
   useEffect(() => {
     configApi.get().then((cfg) => setGame(cfg.game)).catch(() => {});
   }, []);
 
-  // Reset state when dialog closes
   const handleOpenChange = (isOpen: boolean) => {
     setOpen(isOpen);
     if (!isOpen) {
       setStep(1);
       setModIdInput("");
-      setModInfo(null);
-      setFiles([]);
-      setSelectedFileIds(new Set());
+      setLookedUp([]);
+      setSelectedKeys(new Set());
       setResults([]);
     }
   };
 
-  // Step 1: Look up mod
+  const fileKey = (modId: number, fileId: number) => `${modId}:${fileId}`;
+
+  // Step 1: Look up mods
   const handleLookup = async () => {
-    const modId = parseInt(modIdInput);
-    if (!modId || modId <= 0) {
-      toast.error("Please enter a valid mod ID");
+    const ids = modIdInput
+      .split(/[\s,]+/)
+      .map((s) => parseInt(s.trim()))
+      .filter((n) => n > 0);
+
+    if (ids.length === 0) {
+      toast.error("Please enter at least one valid mod ID");
       return;
     }
+
     setLoading(true);
-    try {
-      const [mod, allFiles] = await Promise.all([
-        nexusmodsApi.getMod(game, modId),
-        nexusmodsApi.getFiles(game, modId),
-      ]);
-      setModInfo(mod);
-      // Filter to MAIN and OPTIONAL only
-      const filtered = allFiles.filter(
-        (f) => f.category_name === "MAIN" || f.category_name === "OPTIONAL"
-      );
-      setFiles(filtered);
-      // Pre-check MAIN files
-      const mainIds = new Set(
-        filtered.filter((f) => f.category_name === "MAIN").map((f) => f.file_id)
-      );
-      setSelectedFileIds(mainIds);
-      setStep(2);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to look up mod");
-    } finally {
-      setLoading(false);
+    const newMods: LookedUpMod[] = [];
+    const preChecked = new Set<string>();
+    const errors: string[] = [];
+
+    await Promise.all(
+      ids.map(async (modId) => {
+        try {
+          const [mod, allFiles] = await Promise.all([
+            nexusmodsApi.getMod(game, modId),
+            nexusmodsApi.getFiles(game, modId),
+          ]);
+          const filtered: ModFile[] = allFiles
+            .filter((f) => f.category_name === "MAIN" || f.category_name === "OPTIONAL")
+            .map((f) => ({ ...f, mod_id: modId }));
+          newMods.push({ info: mod, files: filtered });
+          for (const f of filtered) {
+            if (f.category_name === "MAIN") {
+              preChecked.add(fileKey(modId, f.file_id));
+            }
+          }
+        } catch {
+          errors.push(`Mod ${modId} not found`);
+        }
+      })
+    );
+
+    if (errors.length > 0) {
+      toast.error(errors.join(", "));
     }
+
+    if (newMods.length > 0) {
+      // Sort by mod_id for stable ordering
+      newMods.sort((a, b) => a.info.mod_id - b.info.mod_id);
+      setLookedUp(newMods);
+      setSelectedKeys(preChecked);
+      setStep(2);
+    }
+    setLoading(false);
   };
 
-  // Step 2: Toggle file selection
-  const toggleFile = (fileId: number) => {
-    setSelectedFileIds((prev) => {
+  const toggleFile = (modId: number, fileId: number) => {
+    const key = fileKey(modId, fileId);
+    setSelectedKeys((prev) => {
       const next = new Set(prev);
-      if (next.has(fileId)) {
-        next.delete(fileId);
-      } else {
-        next.add(fileId);
-      }
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
 
-  // Step 2: Download selected files
   const handleDownload = () => {
-    const selectedFiles = files.filter((f) => selectedFileIds.has(f.file_id));
-    if (selectedFiles.length === 0) {
+    const selected = allFiles().filter((f) => selectedKeys.has(fileKey(f.mod_id, f.file_id)));
+    if (selected.length === 0) {
       toast.error("Please select at least one file");
       return;
     }
-    for (const file of selectedFiles) {
-      const url = `https://www.nexusmods.com/${game}/mods/${modInfo!.mod_id}?tab=files&file_id=${file.file_id}`;
+    for (const file of selected) {
+      const url = `https://www.nexusmods.com/${game}/mods/${file.mod_id}?tab=files&file_id=${file.file_id}`;
       window.open(url, "_blank");
     }
     setStep(3);
   };
 
-  // Step 3: Register selected files
   const handleRegister = async () => {
-    const selectedFiles = files.filter((f) => selectedFileIds.has(f.file_id));
+    const selected = allFiles().filter((f) => selectedKeys.has(fileKey(f.mod_id, f.file_id)));
     setRegistering(true);
-    const newResults: typeof results = [];
-    for (const file of selectedFiles) {
+    const newResults: RegResult[] = [];
+    for (const file of selected) {
       try {
         await modsApi.create({
-          mod_id: modInfo!.mod_id,
+          mod_id: file.mod_id,
           file_id: file.file_id,
           game,
           local_file: file.file_name,
@@ -154,10 +179,11 @@ export function AddModDialog({ onModAdded }: AddModDialogProps) {
     if (newResults.some((r) => !r.success)) {
       toast.error("Some files failed to register");
     } else {
-      // All succeeded — close after a brief delay
       setTimeout(() => handleOpenChange(false), 1000);
     }
   };
+
+  const allFiles = () => lookedUp.flatMap((m) => m.files);
 
   const formatSize = (kb: number) => {
     if (kb >= 1024) return `${(kb / 1024).toFixed(1)} MB`;
@@ -176,22 +202,21 @@ export function AddModDialog({ onModAdded }: AddModDialogProps) {
         <DialogHeader>
           <DialogTitle>Add New Mod</DialogTitle>
           <DialogDescription>
-            {step === 1 && "Enter a Nexusmods mod ID to look up available files."}
+            {step === 1 && "Enter one or more Nexusmods mod IDs (comma or space separated)."}
             {step === 2 && "Select files to download and register."}
             {step === 3 && "Registering selected files..."}
           </DialogDescription>
         </DialogHeader>
 
-        {/* Step 1: Enter Mod ID */}
+        {/* Step 1: Enter Mod IDs */}
         {step === 1 && (
           <div className="grid gap-4">
             <div className="grid gap-2">
-              <Label htmlFor="mod_id">Mod ID</Label>
+              <Label htmlFor="mod_ids">Mod IDs</Label>
               <div className="flex gap-2">
                 <Input
-                  id="mod_id"
-                  type="number"
-                  placeholder="e.g. 1540"
+                  id="mod_ids"
+                  placeholder="e.g. 1540, 2100, 983"
                   value={modIdInput}
                   onChange={(e) => setModIdInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleLookup()}
@@ -209,16 +234,12 @@ export function AddModDialog({ onModAdded }: AddModDialogProps) {
         )}
 
         {/* Step 2: Select Files */}
-        {step === 2 && modInfo && (
+        {step === 2 && lookedUp.length > 0 && (
           <div className="grid gap-4">
-            <div className="text-sm">
-              <span className="font-medium">{modInfo.name}</span>
-              <span className="text-muted-foreground"> by {modInfo.author}</span>
-            </div>
-            {files.length === 0 ? (
+            {allFiles().length === 0 ? (
               <p className="text-sm text-muted-foreground">No downloadable files found.</p>
             ) : (
-              <div className="max-h-80 overflow-auto rounded-md border">
+              <div className="max-h-96 overflow-auto rounded-md border">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -230,25 +251,35 @@ export function AddModDialog({ onModAdded }: AddModDialogProps) {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {files.map((file) => (
-                      <TableRow key={file.file_id}>
-                        <TableCell>
-                          <input
-                            type="checkbox"
-                            checked={selectedFileIds.has(file.file_id)}
-                            onChange={() => toggleFile(file.file_id)}
-                            className="h-4 w-4 rounded border-gray-300"
-                          />
-                        </TableCell>
-                        <TableCell className="font-medium">{file.name}</TableCell>
-                        <TableCell>{file.version}</TableCell>
-                        <TableCell>
-                          <Badge variant={file.category_name === "MAIN" ? "default" : "secondary"}>
-                            {file.category_name}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">{formatSize(file.size_kb)}</TableCell>
-                      </TableRow>
+                    {lookedUp.map((mod) => (
+                      <Fragment key={mod.info.mod_id}>
+                        <TableRow className="bg-muted/50 hover:bg-muted/50">
+                          <TableCell colSpan={5} className="py-1.5">
+                            <span className="font-medium">{mod.info.name}</span>
+                            <span className="text-muted-foreground"> by {mod.info.author}</span>
+                          </TableCell>
+                        </TableRow>
+                        {mod.files.map((file) => (
+                          <TableRow key={file.file_id}>
+                            <TableCell>
+                              <input
+                                type="checkbox"
+                                checked={selectedKeys.has(fileKey(file.mod_id, file.file_id))}
+                                onChange={() => toggleFile(file.mod_id, file.file_id)}
+                                className="h-4 w-4 rounded border-gray-300"
+                              />
+                            </TableCell>
+                            <TableCell className="font-medium">{file.name}</TableCell>
+                            <TableCell>{file.version}</TableCell>
+                            <TableCell>
+                              <Badge variant={file.category_name === "MAIN" ? "default" : "secondary"}>
+                                {file.category_name}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">{formatSize(file.size_kb)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </Fragment>
                     ))}
                   </TableBody>
                 </Table>
@@ -258,7 +289,7 @@ export function AddModDialog({ onModAdded }: AddModDialogProps) {
               <Button variant="outline" onClick={() => setStep(1)}>
                 Back
               </Button>
-              <Button onClick={handleDownload} disabled={selectedFileIds.size === 0}>
+              <Button onClick={handleDownload} disabled={selectedKeys.size === 0}>
                 <DownloadIcon />
                 Download Selected
               </Button>
@@ -287,7 +318,7 @@ export function AddModDialog({ onModAdded }: AddModDialogProps) {
             ) : (
               <div className="grid gap-2">
                 {results.map((r) => (
-                  <div key={r.file.file_id} className="flex items-center justify-between text-sm">
+                  <div key={`${r.file.mod_id}:${r.file.file_id}`} className="flex items-center justify-between text-sm">
                     <span>{r.file.name}</span>
                     {r.success ? (
                       <Badge variant="default">Registered</Badge>

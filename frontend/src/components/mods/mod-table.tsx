@@ -4,7 +4,7 @@ import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import { formatDistanceToNow, format } from "date-fns";
 import { toast } from "sonner";
-import { modsApi } from "@/lib/api";
+import { modsApi, updatesApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { Mod } from "@/lib/types";
 import { UpdateBadge } from "@/components/mods/update-badge";
@@ -47,6 +47,7 @@ import {
   DownloadIcon,
   EyeIcon,
   FilterIcon,
+  RefreshCwIcon,
   Loader2Icon,
   MoreHorizontalIcon,
   SearchIcon,
@@ -204,6 +205,39 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
       );
     }
     toast.success(`Opened ${updatable.length} download page${updatable.length > 1 ? "s" : ""}`);
+  };
+
+  const handleCheckFile = async (mod: Mod) => {
+    try {
+      const result = await updatesApi.checkSingle(mod.id);
+      if (result.update_available) {
+        toast.success(`Update available for ${mod.name || mod.local_file}`);
+      } else {
+        toast.info(`${mod.name || mod.local_file} is up to date`);
+      }
+      onMutate();
+    } catch {
+      toast.info(`${mod.name || mod.local_file} is up to date`);
+      onMutate();
+    }
+  };
+
+  const handleCheckGroup = async (group: { modId: number; files: Mod[] }) => {
+    let updates = 0;
+    for (const mod of group.files) {
+      try {
+        const result = await updatesApi.checkSingle(mod.id);
+        if (result.update_available) updates++;
+      } catch {
+        // no update
+      }
+    }
+    if (updates > 0) {
+      toast.success(`${updates} update${updates > 1 ? "s" : ""} found`);
+    } else {
+      toast.info("All files up to date");
+    }
+    onMutate();
   };
 
   const handleDelete = async () => {
@@ -525,6 +559,12 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem
+                        onClick={() => handleCheckGroup(group)}
+                      >
+                        <RefreshCwIcon />
+                        Check Update
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
                         onClick={() => handleDownloadGroup(group)}
                         disabled={!group.files.some((m) => m.update_available && m.latest_file_id)}
                       >
@@ -603,6 +643,10 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
                             <EyeIcon />
                             View Details
                           </Link>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleCheckFile(mod)}>
+                          <RefreshCwIcon />
+                          Check Update
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
