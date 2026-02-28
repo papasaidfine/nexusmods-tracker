@@ -3,7 +3,14 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-trap 'echo "Shutting down..."; kill 0' EXIT INT TERM
+cleanup() {
+    echo "Shutting down..."
+    trap - EXIT INT TERM   # prevent re-entry when kill 0 exits the shell
+    kill 0 2>/dev/null || true
+    wait 2>/dev/null || true
+}
+
+trap cleanup EXIT INT TERM
 
 cd "$SCRIPT_DIR/backend"
 uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload &
