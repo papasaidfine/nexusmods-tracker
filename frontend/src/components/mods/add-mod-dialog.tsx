@@ -134,6 +134,45 @@ export function AddModDialog({ onModAdded }: AddModDialogProps) {
     });
   };
 
+  const selectionState = (files: ModFile[]): "all" | "some" | "none" => {
+    if (files.length === 0) return "none";
+    let selected = 0;
+    for (const f of files) {
+      if (selectedKeys.has(fileKey(f.mod_id, f.file_id))) selected++;
+    }
+    if (selected === 0) return "none";
+    if (selected === files.length) return "all";
+    return "some";
+  };
+
+  const toggleAll = () => {
+    const files = allFiles();
+    const state = selectionState(files);
+    setSelectedKeys(() => {
+      if (state === "all") return new Set();
+      return new Set(files.map((f) => fileKey(f.mod_id, f.file_id)));
+    });
+  };
+
+  const toggleMod = (modId: number) => {
+    const mod = lookedUp.find((m) => m.info.mod_id === modId);
+    if (!mod) return;
+    const state = selectionState(mod.files);
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (state === "all") {
+        for (const f of mod.files) next.delete(fileKey(f.mod_id, f.file_id));
+      } else {
+        for (const f of mod.files) next.add(fileKey(f.mod_id, f.file_id));
+      }
+      return next;
+    });
+  };
+
+  const setIndeterminate = (state: "all" | "some" | "none") => (el: HTMLInputElement | null) => {
+    if (el) el.indeterminate = state === "some";
+  };
+
   const handleDownload = () => {
     const selected = allFiles().filter((f) => selectedKeys.has(fileKey(f.mod_id, f.file_id)));
     if (selected.length === 0) {
@@ -243,7 +282,17 @@ export function AddModDialog({ onModAdded }: AddModDialogProps) {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-10"></TableHead>
+                      <TableHead className="w-10">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all files"
+                          title="Select all / deselect all"
+                          checked={selectionState(allFiles()) === "all"}
+                          ref={setIndeterminate(selectionState(allFiles()))}
+                          onChange={toggleAll}
+                          className="h-4 w-4 rounded border-gray-300"
+                        />
+                      </TableHead>
                       <TableHead>Name</TableHead>
                       <TableHead>Version</TableHead>
                       <TableHead>Category</TableHead>
@@ -251,10 +300,24 @@ export function AddModDialog({ onModAdded }: AddModDialogProps) {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {lookedUp.map((mod) => (
+                    {lookedUp.map((mod) => {
+                      const modState = selectionState(mod.files);
+                      return (
                       <Fragment key={mod.info.mod_id}>
                         <TableRow className="bg-muted/50 hover:bg-muted/50">
-                          <TableCell colSpan={5} className="py-1.5">
+                          <TableCell className="py-1.5">
+                            <input
+                              type="checkbox"
+                              aria-label={`Select all files for ${mod.info.name}`}
+                              title="Select all / deselect all for this mod"
+                              checked={modState === "all"}
+                              ref={setIndeterminate(modState)}
+                              onChange={() => toggleMod(mod.info.mod_id)}
+                              className="h-4 w-4 rounded border-gray-300"
+                              disabled={mod.files.length === 0}
+                            />
+                          </TableCell>
+                          <TableCell colSpan={4} className="py-1.5">
                             <span className="font-medium">{mod.info.name}</span>
                             <span className="text-muted-foreground"> by {mod.info.author}</span>
                           </TableCell>
@@ -280,19 +343,25 @@ export function AddModDialog({ onModAdded }: AddModDialogProps) {
                           </TableRow>
                         ))}
                       </Fragment>
-                    ))}
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>
             )}
-            <div className="flex justify-between">
+            <div className="flex items-center justify-between">
               <Button variant="outline" onClick={() => setStep(1)}>
                 Back
               </Button>
-              <Button onClick={handleDownload} disabled={selectedKeys.size === 0}>
-                <DownloadIcon />
-                Download Selected
-              </Button>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-muted-foreground">
+                  {selectedKeys.size} of {allFiles().length} selected
+                </span>
+                <Button onClick={handleDownload} disabled={selectedKeys.size === 0}>
+                  <DownloadIcon />
+                  Download Selected
+                </Button>
+              </div>
             </div>
           </div>
         )}
