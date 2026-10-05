@@ -2,7 +2,7 @@
 Mods router - CRUD operations for tracked mods
 """
 from fastapi import APIRouter, HTTPException
-from typing import List
+from typing import List, Optional
 import os
 from datetime import datetime, timezone
 from models import Mod, ModCreate, ModUpdate
@@ -182,7 +182,13 @@ def mark_mod_updated(mod_db_id: int):
     mod = get_mod_by_id(mod_db_id)
     if not mod:
         raise HTTPException(status_code=404, detail="Mod not found")
+    return apply_update(mod)
 
+
+def apply_update(mod: dict, new_local_file: Optional[str] = None) -> dict:
+    """Promote a mod's pending update and delete its old local file.
+    new_local_file overrides the downloaded filename when it differs from Nexusmods' file_name."""
+    mod_db_id = mod["id"]
     latest_file_id = mod.get("latest_file_id")
     if not latest_file_id or not mod.get("update_available"):
         raise HTTPException(status_code=400, detail="No pending update to mark")
@@ -195,7 +201,7 @@ def mark_mod_updated(mod_db_id: int):
         )
 
     # Update local_file to the new filename (comes from the Nexusmods API, so validate it)
-    new_local_file = mod.get("latest_file_name") or mod["local_file"]
+    new_local_file = new_local_file or mod.get("latest_file_name") or mod["local_file"]
     old_local_file = mod["local_file"]
     mods_dir = os.getenv("MODS_DIR", "")
     try:

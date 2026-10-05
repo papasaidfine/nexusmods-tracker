@@ -10,6 +10,7 @@ from models import LocalFile
 from database import get_all_mods, get_mod_by_file, update_mod
 from nexusmods_client import get_nexusmods_client
 from paths import mod_file_path
+import fluffy
 
 router = APIRouter()
 
@@ -104,6 +105,14 @@ def auto_detect_updates():
         if lfn and mod.get("update_available"):
             pending[lfn] = mod
 
+    # Mods with options installed in Fluffy go through the Fluffy update flow, which
+    # deletes the old archive only after swapping the options
+    try:
+        installed = fluffy.read_installed()
+        cache = fluffy.known_options(installed, fluffy.read_cache_with_retry())
+    except (fluffy.FluffyError, OSError):
+        installed, cache = [], []
+
     results = []
     client = get_nexusmods_client()
 
@@ -112,6 +121,9 @@ def auto_detect_updates():
             continue
 
         mod = pending[filename]
+        if fluffy.count_installed_from(mod["local_file"], installed, cache):
+            print(f"[auto-detect] Skipping mod {mod['id']}: options installed in Fluffy, use Update in Fluffy")
+            continue
         latest_file_id = mod["latest_file_id"]
         old_local_file = mod["local_file"]
 

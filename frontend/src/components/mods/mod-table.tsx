@@ -6,8 +6,9 @@ import { formatDistanceToNow, format } from "date-fns";
 import { toast } from "sonner";
 import { modsApi, updatesApi } from "@/lib/api";
 import { cn, openUrlsInNewTabs } from "@/lib/utils";
-import type { Mod } from "@/lib/types";
+import type { FluffyCandidate, Mod } from "@/lib/types";
 import { UpdateBadge } from "@/components/mods/update-badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -50,6 +51,7 @@ import {
   RefreshCwIcon,
   Loader2Icon,
   MoreHorizontalIcon,
+  PackageCheckIcon,
   SearchIcon,
   Trash2Icon,
   UserIcon,
@@ -58,6 +60,10 @@ import {
 interface ModTableProps {
   mods: Mod[];
   onMutate: () => void;
+  /** Fluffy update readiness per mod DB id (only mods with a pending update) */
+  fluffy?: Map<number, FluffyCandidate>;
+  fluffyBusy?: boolean;
+  onFluffyUpdate?: (modDbIds: number[]) => void;
 }
 
 type SortField =
@@ -109,7 +115,10 @@ function formatRelativeDate(dateStr: string | null) {
   }
 }
 
-export function ModTable({ mods, onMutate }: ModTableProps) {
+export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }: ModTableProps) {
+  const downloadedIds = (files: Mod[]) =>
+    files.filter((m) => fluffy?.get(m.id)?.new_archive).map((m) => m.id);
+
   const [sortField, setSortField] = useState<SortField>("mod_name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(new Set());
@@ -664,9 +673,16 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
                             const updatable = group.files.filter((m) => m.update_available).length;
                             if (updatable > 0) {
                               return (
-                                <span className="text-xs font-medium text-orange-500">
-                                  {updatable}/{group.files.length} update{updatable !== 1 ? "s" : ""} available
-                                </span>
+                                <>
+                                  <span className="text-xs font-medium text-orange-500">
+                                    {updatable}/{group.files.length} update{updatable !== 1 ? "s" : ""} available
+                                  </span>
+                                  {downloadedIds(group.files).length > 0 && (
+                                    <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                                      {downloadedIds(group.files).length} downloaded
+                                    </span>
+                                  )}
+                                </>
                               );
                             }
                             return null;
@@ -695,6 +711,15 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
                               <DownloadIcon />
                               Download Updates
                             </DropdownMenuItem>
+                            {onFluffyUpdate && (
+                              <DropdownMenuItem
+                                onClick={() => onFluffyUpdate(downloadedIds(group.files))}
+                                disabled={fluffyBusy || downloadedIds(group.files).length === 0}
+                              >
+                                <PackageCheckIcon />
+                                Update in Fluffy
+                              </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -752,6 +777,28 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
                           ) : (
                             <UpdateBadge updateAvailable={mod.update_available} />
                           )}
+                          {(() => {
+                            const info = fluffy?.get(mod.id);
+                            if (!info) return null;
+                            return (
+                              <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                                {info.new_archive ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="border-emerald-500 text-emerald-600 dark:text-emerald-400"
+                                    title={info.new_archive}
+                                  >
+                                    Downloaded
+                                  </Badge>
+                                ) : (
+                                  <span>not downloaded</span>
+                                )}
+                                {info.installed_count > 0 && (
+                                  <span>· {info.installed_count} options in Fluffy</span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell className="text-right">
                           <DropdownMenu>

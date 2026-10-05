@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from database import init_db
-from routers import mods, local_files, updates, nexusmods_api
+from routers import mods, local_files, updates, nexusmods_api, fluffy
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -40,6 +40,7 @@ app.include_router(mods.router, prefix="/api/mods", tags=["mods"])
 app.include_router(local_files.router, prefix="/api/local-files", tags=["local-files"])
 app.include_router(updates.router, prefix="/api/updates", tags=["updates"])
 app.include_router(nexusmods_api.router, prefix="/api/nexusmods", tags=["nexusmods"])
+app.include_router(fluffy.router, prefix="/api/fluffy", tags=["fluffy"])
 
 @app.get("/")
 def root():

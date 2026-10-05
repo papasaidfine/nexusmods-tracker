@@ -56,7 +56,23 @@ Open **http://localhost:3000**
 ```env
 NEXUSMODS_API_KEY=your_api_key_here
 MODS_DIR=/path/to/your/mods/folder
+# Optional: browser download folder; downloaded updates are moved into MODS_DIR
+DOWNLOADS_DIR=/path/to/your/downloads
 ```
+
+## Updating mods in Fluffy Mod Manager
+
+`MODS_DIR` is Fluffy's `Games/<Game>/Mods` folder. On the Mods page, **Update in Fluffy**
+swaps downloaded updates into Fluffy while keeping the options you had installed:
+
+1. The tracker reads `installed.ini` and `ModinfoCache.bin`, matches each installed option to
+   the same-named option in the new archive, and writes two presets
+   (`TrackerUpdate-1-Uninstall`, `TrackerUpdate-2-Install`). It restarts Fluffy (WSL →
+   `taskkill.exe`/`cmd.exe`) so Fluffy scans the new archive and loads the presets.
+2. Click the two presets in Fluffy. Options with no counterpart in the new version are listed
+   for you to replace by hand.
+3. Once `installed.ini` shows the swap, the tracker records the new version, deletes the old
+   archive and removes the presets.
 
 | Variable | Description |
 |----------|-------------|

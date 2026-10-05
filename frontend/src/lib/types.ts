@@ -87,3 +87,71 @@ export interface NexusmodsFile {
   uploaded_time: string;
   file_name: string;
 }
+
+export interface FluffyStatus {
+  running: boolean | null;
+  error: string | null;
+  installed_ini: boolean;
+  session_active: boolean;
+}
+
+export interface FluffyCandidate {
+  mod_db_id: number;
+  mod_name: string | null;
+  name: string | null;
+  author: string | null;
+  version: string | null;
+  latest_version: string | null;
+  old_archive: string;
+  old_exists: boolean;
+  new_archive: string | null;
+  installed_count: number;
+}
+
+export interface FluffyCandidates {
+  candidates: FluffyCandidate[];
+}
+
+/** Fluffy option IDs are 64-bit, so they are passed as strings */
+export interface FluffyOption {
+  section: string;
+  mod_id: string;
+  short_id: string;
+  mod_name: string;
+}
+
+export interface FluffySessionMod {
+  mod_db_id: number;
+  mod_name: string | null;
+  name: string | null;
+  old_version: string | null;
+  new_version: string | null;
+  old_archive: string;
+  new_archive: string;
+  matched: Array<{
+    folder: string;
+    old: FluffyOption;
+    new: FluffyOption;
+    old_installed: boolean;
+    new_installed: boolean;
+  }>;
+  removed: Array<{ folder: string; old: FluffyOption; old_installed: boolean }>;
+  added: string[];
+  done: boolean;
+}
+
+export interface FluffySession {
+  created_at: string;
+  uninstall_preset: string | null;
+  install_preset: string | null;
+  mods: FluffySessionMod[];
+  done: boolean;
+  /** Set by prepare when Fluffy could not be restarted automatically */
+  warning?: string | null;
+}
+
+export interface FluffyFinalizeResult {
+  updated: number[];
+  errors: Array<{ mod_db_id: number; error: string }>;
+  leftover_old_archives: string[];
+}

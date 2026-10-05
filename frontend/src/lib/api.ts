@@ -11,6 +11,10 @@ import type {
   ScanResult,
   NexusmodsMod,
   NexusmodsFile,
+  FluffyStatus,
+  FluffyCandidates,
+  FluffySession,
+  FluffyFinalizeResult,
 } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -142,6 +146,29 @@ export const nexusmodsApi = {
 
   getFiles: (game: string, modId: number) =>
     fetchApi<NexusmodsFile[]>(`/api/nexusmods/files/${game}/${modId}`),
+};
+
+/**
+ * Fluffy Mod Manager API
+ */
+export const fluffyApi = {
+  status: () => fetchApi<FluffyStatus>("/api/fluffy/status"),
+
+  candidates: () => fetchApi<FluffyCandidates>("/api/fluffy/candidates"),
+
+  session: () => fetchApi<FluffySession | null>("/api/fluffy/session"),
+
+  prepare: (items: Array<{ mod_db_id: number; new_archive: string }>) =>
+    fetchApi<FluffySession>("/api/fluffy/prepare", {
+      method: "POST",
+      body: JSON.stringify({ items }),
+    }),
+
+  finalize: () =>
+    fetchApi<FluffyFinalizeResult>("/api/fluffy/finalize", { method: "POST" }),
+
+  cancel: () =>
+    fetchApi<{ message: string }>("/api/fluffy/cancel", { method: "POST" }),
 };
 
 /**
