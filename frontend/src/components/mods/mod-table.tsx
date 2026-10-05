@@ -5,7 +5,7 @@ import Link from "next/link";
 import { formatDistanceToNow, format } from "date-fns";
 import { toast } from "sonner";
 import { modsApi, updatesApi } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, openUrlsInNewTabs } from "@/lib/utils";
 import type { Mod } from "@/lib/types";
 import { UpdateBadge } from "@/components/mods/update-badge";
 import { Button } from "@/components/ui/button";
@@ -198,11 +198,14 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
       toast.info("No updates available to download");
       return;
     }
-    for (const mod of updatable) {
-      window.open(
-        getNexusmodsUrl(mod.game, mod.mod_id, mod.latest_file_id!),
-        "_blank"
+    const urls = updatable.map((mod) => getNexusmodsUrl(mod.game, mod.mod_id, mod.latest_file_id!));
+    const blocked = openUrlsInNewTabs(urls);
+    if (blocked.length > 0) {
+      toast.warning(
+        `Browser blocked ${blocked.length} of ${new Set(urls).size} download pages. ` +
+          "Allow pop-ups for this site (icon in the address bar) and try again."
       );
+      return;
     }
     toast.success(`Opened ${updatable.length} download page${updatable.length > 1 ? "s" : ""}`);
   };

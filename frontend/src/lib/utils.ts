@@ -7,6 +7,19 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * Open each URL in a new tab. Browsers only allow one popup per click unless
+ * popups are allowed for this site, so returns the URLs that were blocked.
+ */
+export function openUrlsInNewTabs(urls: string[]): string[] {
+  const blocked: string[] = []
+  for (const url of new Set(urls)) {
+    const win = window.open(url, "_blank")
+    if (!win) blocked.push(url)
+  }
+  return blocked
+}
+
+/**
  * Format bytes to human-readable file size
  */
 export function formatFileSize(bytes: number): string {

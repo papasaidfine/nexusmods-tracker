@@ -3,6 +3,7 @@
 import { Fragment, useState, useEffect } from "react";
 import { toast } from "sonner";
 import { modsApi, nexusmodsApi, configApi } from "@/lib/api";
+import { openUrlsInNewTabs } from "@/lib/utils";
 import type { NexusmodsMod, NexusmodsFile } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import {
@@ -179,9 +180,15 @@ export function AddModDialog({ onModAdded }: AddModDialogProps) {
       toast.error("Please select at least one file");
       return;
     }
-    for (const file of selected) {
-      const url = `https://www.nexusmods.com/${game}/mods/${file.mod_id}?tab=files&file_id=${file.file_id}`;
-      window.open(url, "_blank");
+    const urls = selected.map(
+      (file) => `https://www.nexusmods.com/${game}/mods/${file.mod_id}?tab=files&file_id=${file.file_id}`
+    );
+    const blocked = openUrlsInNewTabs(urls);
+    if (blocked.length > 0) {
+      toast.warning(
+        `Browser blocked ${blocked.length} of ${urls.length} download pages. ` +
+          "Allow pop-ups for this site (icon in the address bar) and try again."
+      );
     }
     setStep(3);
   };
