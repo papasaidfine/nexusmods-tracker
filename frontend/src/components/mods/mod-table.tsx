@@ -52,6 +52,7 @@ import {
   MoreHorizontalIcon,
   SearchIcon,
   Trash2Icon,
+  UserIcon,
 } from "lucide-react";
 
 interface ModTableProps {
@@ -69,6 +70,22 @@ type SortField =
   | "update_available";
 
 type SortDirection = "asc" | "desc";
+
+interface ModGroup {
+  modId: number;
+  modName: string;
+  author: string;
+  game: string;
+  files: Mod[];
+}
+
+interface AuthorGroup {
+  author: string;
+  mods: ModGroup[];
+  files: Mod[];
+}
+
+const UNKNOWN_AUTHOR = "Unknown author";
 
 function getNexusmodsUrl(game: string, modId: number, fileId: number) {
   return `https://www.nexusmods.com/${game}/mods/${modId}?tab=files&file_id=${fileId}`;
@@ -96,6 +113,9 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
   const [sortField, setSortField] = useState<SortField>("mod_name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(new Set());
+  // Authors whose expansion differs from the default (collapsed normally,
+  // expanded while searching so matches are visible).
+  const [toggledAuthors, setToggledAuthors] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<Mod | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [search, setSearch] = useState("");
@@ -174,7 +194,7 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
   });
 
   // Group mods by mod_id, preserving sort order of first appearance
-  const groupedMods: { modId: number; modName: string; author: string; game: string; files: Mod[] }[] = [];
+  const groupedMods: ModGroup[] = [];
   const groupIndex = new Map<number, number>();
   for (const mod of sortedMods) {
     const idx = groupIndex.get(mod.mod_id);
@@ -185,14 +205,55 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
       groupedMods.push({
         modId: mod.mod_id,
         modName: mod.mod_name || `Mod ${mod.mod_id}`,
-        author: mod.author || "—",
+        author: mod.author || UNKNOWN_AUTHOR,
         game: mod.game,
         files: [mod],
       });
     }
   }
 
-  const handleDownloadGroup = (group: { modId: number; game: string; files: Mod[] }) => {
+  // Group mod groups by author. Authors are ordered alphabetically (direction
+  // follows the Author column when it is the active sort); mods within an
+  // author keep the table's sort order.
+  const authorMap = new Map<string, AuthorGroup>();
+  for (const group of groupedMods) {
+    let authorGroup = authorMap.get(group.author);
+    if (!authorGroup) {
+      authorGroup = { author: group.author, mods: [], files: [] };
+      authorMap.set(group.author, authorGroup);
+    }
+    authorGroup.mods.push(group);
+    authorGroup.files.push(...group.files);
+  }
+  const authorDir = sortField === "author" && sortDirection === "desc" ? -1 : 1;
+  const authorGroups = [...authorMap.values()].sort((a, b) => {
+    if (a.author === UNKNOWN_AUTHOR) return 1;
+    if (b.author === UNKNOWN_AUTHOR) return -1;
+    return a.author.localeCompare(b.author, undefined, { sensitivity: "base" }) * authorDir;
+  });
+
+  const isAuthorExpanded = (author: string) =>
+    (search !== "") !== toggledAuthors.has(author);
+
+  const toggleAuthor = (author: string) => {
+    setToggledAuthors((prev) => {
+      const next = new Set(prev);
+      if (next.has(author)) next.delete(author);
+      else next.add(author);
+      return next;
+    });
+  };
+
+  const toggleModGroup = (modId: number) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(modId)) next.delete(modId);
+      else next.add(modId);
+      return next;
+    });
+  };
+
+  const handleDownloadGroup = (group: { files: Mod[] }) => {
     const updatable = group.files.filter((m) => m.update_available && m.latest_file_id);
     if (updatable.length === 0) {
       toast.info("No updates available to download");
@@ -225,7 +286,7 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
     }
   };
 
-  const handleCheckGroup = async (group: { modId: number; files: Mod[] }) => {
+  const handleCheckGroup = async (group: { files: Mod[] }) => {
     let updates = 0;
     for (const mod of group.files) {
       try {
@@ -348,14 +409,21 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
     );
   }
 
-  const allCollapsed = groupedMods.length > 0 && collapsedGroups.size === groupedMods.length;
+  const allCollapsed =
+    authorGroups.length > 0 && authorGroups.every((g) => !isAuthorExpanded(g.author));
 
   const toggleCollapseAll = () => {
-    if (allCollapsed) {
-      setCollapsedGroups(new Set());
-    } else {
-      setCollapsedGroups(new Set(groupedMods.map((g) => g.modId)));
-    }
+    // Collapsing: every author folds to the default state when not searching,
+    // or is toggled off when searching. Expanding does the inverse and also
+    // reopens any collapsed mod groups.
+    const wantExpanded = allCollapsed;
+    const defaultExpanded = search !== "";
+    setToggledAuthors(
+      wantExpanded === defaultExpanded
+        ? new Set()
+        : new Set(authorGroups.map((g) => g.author))
+    );
+    if (wantExpanded) setCollapsedGroups(new Set());
   };
 
   return (
@@ -366,7 +434,14 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
           <Input
             placeholder="Search mods..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              // Searching flips the default expansion; reset manual toggles
+              // when entering or leaving search mode.
+              if ((e.target.value !== "") !== (search !== "")) {
+                setToggledAuthors(new Set());
+              }
+              setSearch(e.target.value);
+            }}
             className="pl-9 h-8"
           />
         </div>
@@ -505,167 +580,216 @@ export function ModTable({ mods, onMutate }: ModTableProps) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {groupedMods.map((group) => (
-            <Fragment key={`group-${group.modId}`}>
-              {/* Mod group header */}
-              <TableRow
-                className="bg-muted/50 hover:bg-muted/50 cursor-pointer"
-                onClick={() => setCollapsedGroups((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(group.modId)) next.delete(group.modId);
-                  else next.add(group.modId);
-                  return next;
-                })}
-              >
-                <TableCell colSpan={7} className="py-2">
-                  <div className="flex items-center gap-2">
-                    {collapsedGroups.has(group.modId) ? (
-                      <ChevronRightIcon className="size-4 text-muted-foreground shrink-0" />
-                    ) : (
-                      <ChevronDownIcon className="size-4 text-muted-foreground shrink-0" />
-                    )}
-                    <a
-                      href={`https://www.nexusmods.com/${group.game}/mods/${group.modId}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-semibold hover:underline"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {group.modName}
-                    </a>
-                    <span className="text-xs text-muted-foreground">
-                      by {group.author}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      ({group.files.length} file{group.files.length !== 1 ? "s" : ""})
-                    </span>
-                    {(() => {
-                      const updatable = group.files.filter((m) => m.update_available).length;
-                      if (updatable > 0) {
-                        return (
-                          <span className="text-xs font-medium text-orange-500">
-                            {updatable}/{group.files.length} update{updatable !== 1 ? "s" : ""} available
-                          </span>
-                        );
-                      }
-                      return null;
-                    })()}
-                  </div>
-                </TableCell>
-                <TableCell className="text-right py-2">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon-xs">
-                        <MoreHorizontalIcon />
-                        <span className="sr-only">Group Actions</span>
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        onClick={() => handleCheckGroup(group)}
-                      >
-                        <RefreshCwIcon />
-                        Check Update
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => handleDownloadGroup(group)}
-                        disabled={!group.files.some((m) => m.update_available && m.latest_file_id)}
-                      >
-                        <DownloadIcon />
-                        Download Updates
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
-              </TableRow>
-              {/* File rows */}
-              {!collapsedGroups.has(group.modId) && group.files.map((mod) => (
-                <TableRow key={mod.id}>
-                  <TableCell className="max-w-[240px] pl-6">
-                    <div className="flex items-center gap-1.5">
-                      <Link
-                        href={`/mods/${mod.id}`}
-                        className="hover:underline text-foreground font-medium block truncate"
-                      >
-                        {mod.name || mod.local_file}
-                      </Link>
-                      {mod.file_exists === false && (
-                        <span className="text-destructive shrink-0" title="Local file missing from disk">
-                          <AlertTriangleIcon className="size-3.5" />
+          {authorGroups.map((authorGroup) => {
+            const authorExpanded = isAuthorExpanded(authorGroup.author);
+            const authorUpdates = authorGroup.files.filter((m) => m.update_available).length;
+            return (
+              <Fragment key={`author-${authorGroup.author}`}>
+                {/* Author group header */}
+                <TableRow
+                  className="bg-muted hover:bg-muted cursor-pointer"
+                  onClick={() => toggleAuthor(authorGroup.author)}
+                >
+                  <TableCell colSpan={7} className="py-2">
+                    <div className="flex items-center gap-2">
+                      {authorExpanded ? (
+                        <ChevronDownIcon className="size-4 text-muted-foreground shrink-0" />
+                      ) : (
+                        <ChevronRightIcon className="size-4 text-muted-foreground shrink-0" />
+                      )}
+                      <UserIcon className="size-4 text-muted-foreground shrink-0" />
+                      <span className="font-semibold">{authorGroup.author}</span>
+                      <span className="text-xs text-muted-foreground">
+                        ({authorGroup.mods.length} mod{authorGroup.mods.length !== 1 ? "s" : ""},{" "}
+                        {authorGroup.files.length} file{authorGroup.files.length !== 1 ? "s" : ""})
+                      </span>
+                      {authorUpdates > 0 && (
+                        <span className="text-xs font-medium text-orange-500">
+                          {authorUpdates} update{authorUpdates !== 1 ? "s" : ""} available
                         </span>
                       )}
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
-                      {mod.version || "—"}
-                    </code>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {mod.author || "—"}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {mod.category_name || "—"}
-                  </TableCell>
-                  <TableCell
-                    className="text-muted-foreground"
-                    title={mod.uploaded_time ? format(new Date(mod.uploaded_time), "PPpp") : undefined}
-                  >
-                    {formatDate(mod.uploaded_time)}
-                  </TableCell>
-                  <TableCell
-                    className="text-muted-foreground"
-                    title={mod.last_checked ? format(new Date(mod.last_checked), "PPpp") : undefined}
-                  >
-                    {formatRelativeDate(mod.last_checked)}
-                  </TableCell>
-                  <TableCell>
-                    {mod.update_available && mod.latest_file_id ? (
-                      <a
-                        href={getNexusmodsUrl(mod.game, mod.mod_id, mod.latest_file_id)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        <UpdateBadge updateAvailable={true} />
-                      </a>
-                    ) : (
-                      <UpdateBadge updateAvailable={mod.update_available} />
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-right py-2" onClick={(e) => e.stopPropagation()}>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="icon-xs">
                           <MoreHorizontalIcon />
-                          <span className="sr-only">Actions</span>
+                          <span className="sr-only">Author Actions</span>
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem asChild>
-                          <Link href={`/mods/${mod.id}`}>
-                            <EyeIcon />
-                            View Details
-                          </Link>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleCheckFile(mod)}>
+                        <DropdownMenuItem onClick={() => handleCheckGroup(authorGroup)}>
                           <RefreshCwIcon />
-                          Check Update
+                          Check Updates
                         </DropdownMenuItem>
-                        <DropdownMenuSeparator />
                         <DropdownMenuItem
-                          variant="destructive"
-                          onClick={() => setDeleteTarget(mod)}
+                          onClick={() => handleDownloadGroup(authorGroup)}
+                          disabled={authorUpdates === 0}
                         >
-                          <Trash2Icon />
-                          Delete
+                          <DownloadIcon />
+                          Download Updates
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
-              ))}
-            </Fragment>
-          ))}
+                {authorExpanded && authorGroup.mods.map((group) => (
+                  <Fragment key={`group-${group.modId}`}>
+                    {/* Mod group header */}
+                    <TableRow
+                      className="bg-muted/50 hover:bg-muted/50 cursor-pointer"
+                      onClick={() => toggleModGroup(group.modId)}
+                    >
+                      <TableCell colSpan={7} className="py-2 pl-6">
+                        <div className="flex items-center gap-2">
+                          {collapsedGroups.has(group.modId) ? (
+                            <ChevronRightIcon className="size-4 text-muted-foreground shrink-0" />
+                          ) : (
+                            <ChevronDownIcon className="size-4 text-muted-foreground shrink-0" />
+                          )}
+                          <a
+                            href={`https://www.nexusmods.com/${group.game}/mods/${group.modId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-semibold hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {group.modName}
+                          </a>
+                          <span className="text-xs text-muted-foreground">
+                            ({group.files.length} file{group.files.length !== 1 ? "s" : ""})
+                          </span>
+                          {(() => {
+                            const updatable = group.files.filter((m) => m.update_available).length;
+                            if (updatable > 0) {
+                              return (
+                                <span className="text-xs font-medium text-orange-500">
+                                  {updatable}/{group.files.length} update{updatable !== 1 ? "s" : ""} available
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right py-2" onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon-xs">
+                              <MoreHorizontalIcon />
+                              <span className="sr-only">Group Actions</span>
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={() => handleCheckGroup(group)}
+                            >
+                              <RefreshCwIcon />
+                              Check Update
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => handleDownloadGroup(group)}
+                              disabled={!group.files.some((m) => m.update_available && m.latest_file_id)}
+                            >
+                              <DownloadIcon />
+                              Download Updates
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                    {/* File rows */}
+                    {!collapsedGroups.has(group.modId) && group.files.map((mod) => (
+                      <TableRow key={mod.id}>
+                        <TableCell className="max-w-[240px] pl-12">
+                          <div className="flex items-center gap-1.5">
+                            <Link
+                              href={`/mods/${mod.id}`}
+                              className="hover:underline text-foreground font-medium block truncate"
+                            >
+                              {mod.name || mod.local_file}
+                            </Link>
+                            {mod.file_exists === false && (
+                              <span className="text-destructive shrink-0" title="Local file missing from disk">
+                                <AlertTriangleIcon className="size-3.5" />
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
+                            {mod.version || "—"}
+                          </code>
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {mod.author || "—"}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {mod.category_name || "—"}
+                        </TableCell>
+                        <TableCell
+                          className="text-muted-foreground"
+                          title={mod.uploaded_time ? format(new Date(mod.uploaded_time), "PPpp") : undefined}
+                        >
+                          {formatDate(mod.uploaded_time)}
+                        </TableCell>
+                        <TableCell
+                          className="text-muted-foreground"
+                          title={mod.last_checked ? format(new Date(mod.last_checked), "PPpp") : undefined}
+                        >
+                          {formatRelativeDate(mod.last_checked)}
+                        </TableCell>
+                        <TableCell>
+                          {mod.update_available && mod.latest_file_id ? (
+                            <a
+                              href={getNexusmodsUrl(mod.game, mod.mod_id, mod.latest_file_id)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              <UpdateBadge updateAvailable={true} />
+                            </a>
+                          ) : (
+                            <UpdateBadge updateAvailable={mod.update_available} />
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon-xs">
+                                <MoreHorizontalIcon />
+                                <span className="sr-only">Actions</span>
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem asChild>
+                                <Link href={`/mods/${mod.id}`}>
+                                  <EyeIcon />
+                                  View Details
+                                </Link>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleCheckFile(mod)}>
+                                <RefreshCwIcon />
+                                Check Update
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                variant="destructive"
+                                onClick={() => setDeleteTarget(mod)}
+                              >
+                                <Trash2Icon />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </Fragment>
+                ))}
+              </Fragment>
+            );
+          })}
         </TableBody>
       </Table>
 
