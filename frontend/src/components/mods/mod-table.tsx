@@ -5,7 +5,7 @@ import Link from "next/link";
 import { formatDistanceToNow, format } from "date-fns";
 import { toast } from "sonner";
 import { modsApi, updatesApi } from "@/lib/api";
-import { cn, openUrlsInNewTabs } from "@/lib/utils";
+import { cn, openUrlsStaggered } from "@/lib/utils";
 import type { FluffyCandidate, Mod } from "@/lib/types";
 import { UpdateBadge } from "@/components/mods/update-badge";
 import { Badge } from "@/components/ui/badge";
@@ -93,8 +93,11 @@ interface AuthorGroup {
 
 const UNKNOWN_AUTHOR = "Unknown author";
 
-function getNexusmodsUrl(game: string, modId: number, fileId: number) {
-  return `https://www.nexusmods.com/${game}/mods/${modId}?tab=files&file_id=${fileId}`;
+const DOWNLOAD_PAGE_INTERVAL_MS = 2000;
+
+/** File page on Nexusmods; nmt=1 lets the tracker's userscript click "Slow download" */
+function getNexusmodsDownloadUrl(game: string, modId: number, fileId: number) {
+  return `https://www.nexusmods.com/${game}/mods/${modId}?tab=files&file_id=${fileId}&nmt=1`;
 }
 
 function formatDate(dateStr: string | null) {
@@ -121,7 +124,8 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
 
   const [sortField, setSortField] = useState<SortField>("mod_name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(new Set());
+  // Mod groups whose expansion differs from the default (same rule as authors)
+  const [toggledGroups, setToggledGroups] = useState<Set<number>>(new Set());
   // Authors whose expansion differs from the default (collapsed normally,
   // expanded while searching so matches are visible).
   const [toggledAuthors, setToggledAuthors] = useState<Set<string>>(new Set());
@@ -253,8 +257,11 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
     });
   };
 
+  const isGroupExpanded = (modId: number) =>
+    (search !== "") !== toggledGroups.has(modId);
+
   const toggleModGroup = (modId: number) => {
-    setCollapsedGroups((prev) => {
+    setToggledGroups((prev) => {
       const next = new Set(prev);
       if (next.has(modId)) next.delete(modId);
       else next.add(modId);
@@ -268,16 +275,24 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
       toast.info("No updates available to download");
       return;
     }
-    const urls = updatable.map((mod) => getNexusmodsUrl(mod.game, mod.mod_id, mod.latest_file_id!));
-    const blocked = openUrlsInNewTabs(urls);
-    if (blocked.length > 0) {
-      toast.warning(
-        `Browser blocked ${blocked.length} of ${new Set(urls).size} download pages. ` +
-          "Allow pop-ups for this site (icon in the address bar) and try again."
-      );
+    const urls = updatable.map((mod) => getNexusmodsDownloadUrl(mod.game, mod.mod_id, mod.latest_file_id!));
+    const popupHint = "Allow pop-ups for this site (icon in the address bar) and try again.";
+    let warned = false;
+    const opened = openUrlsStaggered(urls, DOWNLOAD_PAGE_INTERVAL_MS, () => {
+      if (warned) return;
+      warned = true;
+      toast.warning(`Browser blocked some download pages. ${popupHint}`);
+    });
+    if (!opened) {
+      toast.warning(`Browser blocked the download page. ${popupHint}`);
       return;
     }
-    toast.success(`Opened ${updatable.length} download page${updatable.length > 1 ? "s" : ""}`);
+    const count = new Set(urls).size;
+    toast.success(
+      count > 1
+        ? `Opening ${count} download pages, one every ${DOWNLOAD_PAGE_INTERVAL_MS / 1000}s`
+        : "Opened download page"
+    );
   };
 
   const handleCheckFile = async (mod: Mod) => {
@@ -423,8 +438,8 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
 
   const toggleCollapseAll = () => {
     // Collapsing: every author folds to the default state when not searching,
-    // or is toggled off when searching. Expanding does the inverse and also
-    // reopens any collapsed mod groups.
+    // or is toggled off when searching. Expanding does the inverse. Mod groups
+    // go back to their default either way, so expanding lists mods, not files.
     const wantExpanded = allCollapsed;
     const defaultExpanded = search !== "";
     setToggledAuthors(
@@ -432,7 +447,7 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
         ? new Set()
         : new Set(authorGroups.map((g) => g.author))
     );
-    if (wantExpanded) setCollapsedGroups(new Set());
+    setToggledGroups(new Set());
   };
 
   return (
@@ -652,10 +667,10 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
                     >
                       <TableCell colSpan={7} className="py-2 pl-6">
                         <div className="flex items-center gap-2">
-                          {collapsedGroups.has(group.modId) ? (
-                            <ChevronRightIcon className="size-4 text-muted-foreground shrink-0" />
-                          ) : (
+                          {isGroupExpanded(group.modId) ? (
                             <ChevronDownIcon className="size-4 text-muted-foreground shrink-0" />
+                          ) : (
+                            <ChevronRightIcon className="size-4 text-muted-foreground shrink-0" />
                           )}
                           <a
                             href={`https://www.nexusmods.com/${group.game}/mods/${group.modId}`}
@@ -725,7 +740,7 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
                       </TableCell>
                     </TableRow>
                     {/* File rows */}
-                    {!collapsedGroups.has(group.modId) && group.files.map((mod) => (
+                    {isGroupExpanded(group.modId) && group.files.map((mod) => (
                       <TableRow key={mod.id}>
                         <TableCell className="max-w-[240px] pl-12">
                           <div className="flex items-center gap-1.5">
@@ -768,7 +783,7 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
                         <TableCell>
                           {mod.update_available && mod.latest_file_id ? (
                             <a
-                              href={getNexusmodsUrl(mod.game, mod.mod_id, mod.latest_file_id)}
+                              href={getNexusmodsDownloadUrl(mod.game, mod.mod_id, mod.latest_file_id)}
                               target="_blank"
                               rel="noopener noreferrer"
                             >

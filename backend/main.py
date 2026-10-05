@@ -3,6 +3,7 @@ Nexusmods Tracker - FastAPI Backend
 """
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 import os
 import uvicorn
@@ -48,6 +49,16 @@ def root():
         "message": "Nexusmods Tracker API",
         "docs": "/docs"
     }
+
+USERSCRIPT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "userscripts")
+
+@app.get("/userscript/nexus-auto-download.user.js")
+def userscript():
+    """Served so Tampermonkey can install (and auto-update) it from this URL"""
+    return FileResponse(
+        os.path.join(USERSCRIPT_DIR, "nexus-auto-download.user.js"),
+        media_type="text/javascript",
+    )
 
 @app.get("/api/config")
 def get_config():

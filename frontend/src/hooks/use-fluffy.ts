@@ -9,8 +9,8 @@ export function useFluffyCandidates() {
   const { data, error, mutate } = useSWR<FluffyCandidates>(
     "/api/fluffy/candidates",
     fluffyApi.candidates,
-    // Picks up archives downloaded while the page is open
-    { revalidateOnFocus: true }
+    // Picks up archives as the browser finishes downloading them
+    { revalidateOnFocus: true, refreshInterval: 10000 }
   );
   return { candidates: data, isError: error, mutate };
 }

@@ -20,6 +20,27 @@ export function openUrlsInNewTabs(urls: string[]): string[] {
 }
 
 /**
+ * Open URLs in new tabs one by one, intervalMs apart, so download pages don't hit
+ * the site all at once. Only the first open counts as a user gesture; the rest need
+ * pop-ups allowed for this site. Returns false if the first tab was blocked.
+ */
+export function openUrlsStaggered(
+  urls: string[],
+  intervalMs: number,
+  onBlocked: (url: string) => void
+): boolean {
+  const [first, ...rest] = [...new Set(urls)]
+  if (!first) return true
+  if (!window.open(first, "_blank")) return false
+  rest.forEach((url, i) => {
+    setTimeout(() => {
+      if (!window.open(url, "_blank")) onBlocked(url)
+    }, (i + 1) * intervalMs)
+  })
+  return true
+}
+
+/**
  * Format bytes to human-readable file size
  */
 export function formatFileSize(bytes: number): string {

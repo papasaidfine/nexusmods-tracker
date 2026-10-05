@@ -35,6 +35,7 @@ export function Header() {
     } finally {
       setRefreshing(false);
       mutate("/api/mods");
+      mutate("/api/fluffy/candidates");
     }
   };
 

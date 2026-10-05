@@ -171,10 +171,12 @@ def known_options(installed: List[InstalledOption], cache: List[CachedOption]) -
 
     installed_ids = {o.mod_id for o in installed}
     cached_ids = {c.mod_id for c in cache}
-    remembered.update({str(c.mod_id): asdict(c) for c in cache if c.mod_id in installed_ids})
-    remembered = {k: v for k, v in remembered.items() if int(k) in installed_ids}
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(remembered, f, ensure_ascii=False)
+    updated = {k: v for k, v in remembered.items() if int(k) in installed_ids}
+    updated.update({str(c.mod_id): asdict(c) for c in cache if c.mod_id in installed_ids})
+    if updated != remembered:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(updated, f, ensure_ascii=False)
+        remembered = updated
 
     return cache + [CachedOption(**v) for k, v in remembered.items() if int(k) not in cached_ids]
 
@@ -213,18 +215,23 @@ def build_plan(
     old_archive: str,
     new_archive: str,
     installed: List[InstalledOption],
-    cache: List[CachedOption],
+    old_cache: List[CachedOption],
+    new_cache: List[CachedOption],
 ) -> Dict:
     """Map the options installed from old_archive onto same-named options in new_archive.
+
+    old_cache is the cache from before the new archive was scanned; it tells which
+    installed options came from old_archive even if Fluffy reuses their IDs for the
+    new version. new_cache lists the new archive's options.
 
     Options are matched by folder name, which carries no version. Returns:
     - matched: old option -> new option, in install order
     - removed: installed old options with no (unique) counterpart in the new archive
     - added: option folders that only exist in the new archive
     """
-    by_id = {c.mod_id: c for c in cache}
-    old_records = [c for c in cache if c.archive == old_archive]
-    new_records = [c for c in cache if c.archive == new_archive]
+    by_id = {c.mod_id: c for c in old_cache}
+    old_records = [c for c in old_cache if c.archive == old_archive]
+    new_records = [c for c in new_cache if c.archive == new_archive]
 
     new_by_folder: Dict[str, List[CachedOption]] = {}
     for c in new_records:

@@ -60,6 +60,20 @@ MODS_DIR=/path/to/your/mods/folder
 DOWNLOADS_DIR=/path/to/your/downloads
 ```
 
+## Auto-downloading updates
+
+Free Nexusmods accounts have to click "Slow download" on each file page. A
+[Tampermonkey](https://www.tampermonkey.net/) userscript does that click for pages the tracker opens:
+
+1. With the backend running, open http://localhost:8000/userscript/nexus-auto-download.user.js
+   and install it in Tampermonkey (it auto-updates from that URL).
+2. On the Mods page, **Download Updates** opens the file pages one every 2 seconds (allow
+   pop-ups for the tracker). The script clicks "Slow download" within about a second and closes the tab 12 s later.
+   Pages you open yourself on Nexusmods are left alone.
+
+Automated clicking is a gray area under the Nexusmods terms of service; keep it to modest,
+personal use.
+
 ## Updating mods in Fluffy Mod Manager
 
 `MODS_DIR` is Fluffy's `Games/<Game>/Mods` folder. On the Mods page, **Update in Fluffy**
