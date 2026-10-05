@@ -6,8 +6,9 @@ from typing import List
 import os
 from datetime import datetime, timezone
 from models import Mod, ModCreate, ModUpdate
-from database import get_all_mods, get_mod_by_id, create_mod, update_mod, delete_mod
+from database import get_all_mods, get_mod_by_id, get_mod_by_file, create_mod, update_mod, delete_mod
 from nexusmods_client import get_nexusmods_client
+from paths import mod_file_path
 
 router = APIRouter()
 
@@ -26,6 +27,12 @@ def list_mods():
 @router.post("/", response_model=Mod)
 def add_mod(mod_create: ModCreate):
     """Add a new mod to track"""
+    mods_dir = os.getenv("MODS_DIR", "")
+    try:
+        file_path = mod_file_path(mods_dir, mod_create.local_file)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     client = get_nexusmods_client()
 
     try:
@@ -35,10 +42,8 @@ def add_mod(mod_create: ModCreate):
         raise HTTPException(status_code=400, detail=f"Failed to fetch mod details: {str(e)}")
 
     # Get file mtime from disk
-    mods_dir = os.getenv("MODS_DIR", "")
     local_file_mtime = None
     if mods_dir:
-        file_path = os.path.join(mods_dir, mod_create.local_file)
         if os.path.exists(file_path):
             local_file_mtime = datetime.fromtimestamp(
                 os.path.getmtime(file_path), tz=timezone.utc
@@ -129,6 +134,11 @@ def update_tracked_mod(mod_db_id: int, mod_update: ModUpdate):
         raise HTTPException(status_code=404, detail="Mod not found")
 
     updates = mod_update.dict(exclude_unset=True)
+    if "local_file" in updates:
+        try:
+            mod_file_path("", updates["local_file"])
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     return update_mod(mod_db_id, updates)
 
 @router.post("/{mod_db_id}/refresh", response_model=Mod)
@@ -177,6 +187,22 @@ def mark_mod_updated(mod_db_id: int):
     if not latest_file_id or not mod.get("update_available"):
         raise HTTPException(status_code=400, detail="No pending update to mark")
 
+    existing = get_mod_by_file(mod["mod_id"], latest_file_id)
+    if existing and existing["id"] != mod_db_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"File {latest_file_id} is already tracked as {existing['local_file']}",
+        )
+
+    # Update local_file to the new filename (comes from the Nexusmods API, so validate it)
+    new_local_file = mod.get("latest_file_name") or mod["local_file"]
+    old_local_file = mod["local_file"]
+    mods_dir = os.getenv("MODS_DIR", "")
+    try:
+        new_file_path = mod_file_path(mods_dir, new_local_file)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     # Fetch updated file metadata from Nexusmods
     client = get_nexusmods_client()
     try:
@@ -184,14 +210,9 @@ def mark_mod_updated(mod_db_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch file details: {e}")
 
-    # Update local_file to the new filename and record its mtime
-    new_local_file = mod.get("latest_file_name") or mod["local_file"]
-    old_local_file = mod["local_file"]
-    mods_dir = os.getenv("MODS_DIR", "")
-
+    # Record the new file's mtime
     local_file_mtime = None
     if mods_dir:
-        new_file_path = os.path.join(mods_dir, new_local_file)
         if os.path.exists(new_file_path):
             local_file_mtime = datetime.fromtimestamp(
                 os.path.getmtime(new_file_path), tz=timezone.utc
@@ -218,12 +239,12 @@ def mark_mod_updated(mod_db_id: int):
 
     # Delete old file if it's different and still exists
     if old_local_file != new_local_file and mods_dir:
-        old_path = os.path.join(mods_dir, old_local_file)
-        if os.path.exists(old_path):
-            try:
+        try:
+            old_path = mod_file_path(mods_dir, old_local_file)
+            if os.path.exists(old_path):
                 os.remove(old_path)
-            except OSError as e:
-                print(f"[mark-updated] Failed to delete {old_local_file}: {e}")
+        except (ValueError, OSError) as e:
+            print(f"[mark-updated] Failed to delete {old_local_file}: {e}")
 
     return result
 
@@ -238,12 +259,12 @@ def remove_mod(mod_db_id: int):
     # Delete local file from disk
     mods_dir = os.getenv("MODS_DIR", "")
     if mods_dir and mod.get("local_file"):
-        file_path = os.path.join(mods_dir, mod["local_file"])
-        if os.path.exists(file_path):
-            try:
+        try:
+            file_path = mod_file_path(mods_dir, mod["local_file"])
+            if os.path.exists(file_path):
                 os.remove(file_path)
-            except OSError as e:
-                print(f"[delete] Failed to delete {mod['local_file']}: {e}")
+        except (ValueError, OSError) as e:
+            print(f"[delete] Failed to delete {mod['local_file']}: {e}")
 
     delete_mod(mod_db_id)
     return {"message": "Mod deleted successfully"}

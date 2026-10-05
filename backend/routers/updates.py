@@ -2,17 +2,57 @@
 Updates router - Check for mod updates
 """
 from fastapi import APIRouter, HTTPException
-from typing import List
-from datetime import datetime, timezone
+from typing import List, Optional
+from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from models import UpdateInfo
 from database import get_all_mods, update_mod
 from nexusmods_client import get_nexusmods_client
 
 router = APIRouter()
 
-def check_mod_update(mod: dict) -> dict:
+def _find_latest_match(mod: dict, active_files: list, siblings: list) -> Optional[dict]:
+    """Find the remote file that is the successor of a tracked file.
+    siblings are the other tracked files of the same mod."""
+    current_name = mod.get('name') or ''
+    exact = [f for f in active_files if f.get('name', '') == current_name]
+    if exact:
+        return max(exact, key=lambda f: f.get('file_id', 0))
+
+    # Fall back to the same category, but never to a file that belongs to another
+    # tracked file of this mod, otherwise two tracked files can resolve to one update
+    category = mod.get('category_name')
+    if not category:
+        return None
+    sibling_names = {s.get('name') for s in siblings}
+    sibling_file_ids = {s['file_id'] for s in siblings}
+    candidates = [
+        f for f in active_files
+        if f.get('category_name', '') == category
+        and f.get('name') not in sibling_names
+        and f.get('file_id') not in sibling_file_ids
+    ]
+    if not candidates:
+        return None
+
+    if any(s.get('category_name') == category for s in siblings):
+        # Several tracked files share this category: the newest file is ambiguous,
+        # so prefer the one whose name is closest to ours
+        return max(candidates, key=lambda f: (
+            SequenceMatcher(None, current_name, f.get('name', '')).ratio(),
+            f.get('file_id', 0),
+        ))
+    return max(candidates, key=lambda f: f.get('file_id', 0))
+
+def check_mod_update(mod: dict, all_mods: Optional[list] = None) -> dict:
     """Check if a single mod has updates available"""
     client = get_nexusmods_client()
+    if all_mods is None:
+        all_mods = get_all_mods()
+    siblings = [
+        m for m in all_mods
+        if m['mod_id'] == mod['mod_id'] and m['game'] == mod['game'] and m['id'] != mod['id']
+    ]
 
     try:
         # Get all files for this mod
@@ -27,20 +67,9 @@ def check_mod_update(mod: dict) -> dict:
         if not active_files:
             return None
 
-        # Match by exact name first, then fall back to same category
-        current_name = mod.get('name', '')
-        current_category = mod.get('category_name', '')
-
-        matching_files = [f for f in active_files if f.get('name', '') == current_name]
-
-        if not matching_files and current_category:
-            matching_files = [f for f in active_files if f.get('category_name', '') == current_category]
-
-        if not matching_files:
+        latest_file = _find_latest_match(mod, active_files, siblings)
+        if not latest_file:
             return None
-
-        # Find the latest file by file_id
-        latest_file = max(matching_files, key=lambda f: f.get('file_id', 0))
 
         # Check if it's newer than current
         current_file_id = mod['file_id']
@@ -82,26 +111,29 @@ def check_mod_update(mod: dict) -> dict:
         print(f"Error checking updates for mod {mod['mod_id']}: {e}")
         return None
 
-def _pick_period(mods: list) -> str:
-    """Pick the smallest batch period that covers the oldest last_checked."""
+def _pick_period(mods: list) -> Optional[str]:
+    """Pick the smallest batch period that covers the oldest last_checked.
+    Returns None if that is older than the batch endpoint can cover (1 month)."""
     now = datetime.now(timezone.utc)
     oldest = None
     for mod in mods:
         lc = mod.get("last_checked")
         if not lc:
-            return "1m"  # never checked → use largest period
+            continue  # never-checked mods are always checked individually
         if isinstance(lc, str):
             lc = datetime.fromisoformat(lc).replace(tzinfo=timezone.utc)
         if oldest is None or lc < oldest:
             oldest = lc
     if oldest is None:
-        return "1m"
-    delta = now - oldest
-    if delta.days < 1:
         return "1d"
-    if delta.days < 7:
+    delta = now - oldest
+    if delta < timedelta(days=1):
+        return "1d"
+    if delta < timedelta(days=7):
         return "1w"
-    return "1m"
+    if delta < timedelta(days=28):
+        return "1m"
+    return None
 
 @router.get("/check", response_model=List[UpdateInfo])
 def check_all_updates():
@@ -122,6 +154,10 @@ def check_all_updates():
     # Fetch recently updated mod_ids per game (one API call per game)
     updated_mod_ids: set[int] = set()
     for game, game_mods in by_game.items():
+        if period is None:
+            # Last check is too old for the batch endpoint: check everything
+            updated_mod_ids.update(mod["mod_id"] for mod in game_mods)
+            continue
         try:
             updated = client.get_updated_mods(game, period)
             updated_mod_ids.update(entry.get("mod_id") for entry in updated)
@@ -141,7 +177,7 @@ def check_all_updates():
             skipped += 1
             continue
         checked += 1
-        update_info = check_mod_update(mod)
+        update_info = check_mod_update(mod, mods)
         if update_info:
             updates.append(update_info)
 

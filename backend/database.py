@@ -150,6 +150,14 @@ def get_mod_by_id(mod_db_id: int) -> Optional[dict]:
         row = conn.execute("SELECT * FROM mods WHERE id = ?", (mod_db_id,)).fetchone()
         return dict(row) if row else None
 
+def get_mod_by_file(mod_id: int, file_id: int) -> Optional[dict]:
+    """Get mod by Nexusmods (mod_id, file_id)"""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM mods WHERE mod_id = ? AND file_id = ?", (mod_id, file_id)
+        ).fetchone()
+        return dict(row) if row else None
+
 def get_mod_by_local_file(local_file: str) -> Optional[dict]:
     """Get mod by local filename"""
     with get_db() as conn:

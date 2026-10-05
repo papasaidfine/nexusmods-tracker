@@ -7,8 +7,9 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from models import LocalFile
-from database import get_all_mods, update_mod
+from database import get_all_mods, get_mod_by_file, update_mod
 from nexusmods_client import get_nexusmods_client
+from paths import mod_file_path
 
 router = APIRouter()
 
@@ -65,7 +66,10 @@ def scan_mods_directory():
 def delete_local_file(filename: str):
     """Delete a local file from the mods directory"""
     mods_dir = get_mods_directory()
-    file_path = os.path.join(mods_dir, filename)
+    try:
+        file_path = mod_file_path(mods_dir, filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     try:
@@ -110,6 +114,13 @@ def auto_detect_updates():
         mod = pending[filename]
         latest_file_id = mod["latest_file_id"]
         old_local_file = mod["local_file"]
+
+        # Another tracked entry already points at the new file; promoting would
+        # violate UNIQUE(mod_id, file_id)
+        existing = get_mod_by_file(mod["mod_id"], latest_file_id)
+        if existing and existing["id"] != mod["id"]:
+            print(f"[auto-detect] Skipping mod {mod['id']}: file {latest_file_id} already tracked by mod {existing['id']}")
+            continue
 
         # When the new file has the same name as the old one (override),
         # only proceed if the file on disk has a different mtime than what we stored.
@@ -162,12 +173,12 @@ def auto_detect_updates():
 
         # Delete old file if it's different and still exists
         if old_local_file != filename:
-            old_path = os.path.join(mods_dir, old_local_file)
-            if os.path.exists(old_path):
-                try:
+            try:
+                old_path = mod_file_path(mods_dir, old_local_file)
+                if os.path.exists(old_path):
                     os.remove(old_path)
                     print(f"[auto-detect] Deleted old file: {old_local_file}")
-                except OSError as e:
+            except (ValueError, OSError) as e:
                     print(f"[auto-detect] Failed to delete {old_local_file}: {e}")
 
         print(f"[auto-detect] Updated mod {mod['id']}: {old_local_file} -> {filename}")
