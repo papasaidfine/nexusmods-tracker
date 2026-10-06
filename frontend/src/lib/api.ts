@@ -8,6 +8,7 @@ import type {
   ModUpdate,
   LocalFile,
   UpdateInfo,
+  CheckAllJob,
   ScanResult,
   NexusmodsMod,
   NexusmodsFile,
@@ -134,6 +135,11 @@ export const updatesApi = {
 
   checkSingle: (id: number) =>
     fetchApi<UpdateInfo>(`/api/updates/check/${id}`),
+
+  startCheckAll: () =>
+    fetchApi<CheckAllJob>("/api/updates/check-all", { method: "POST" }),
+
+  checkAllStatus: () => fetchApi<CheckAllJob>("/api/updates/check-all"),
 };
 
 

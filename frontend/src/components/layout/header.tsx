@@ -5,12 +5,13 @@ import { RefreshCwIcon, Loader2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { useSWRConfig } from "swr";
 import { Button } from "@/components/ui/button";
-import { modsApi, updatesApi, localFilesApi } from "@/lib/api";
+import { modsApi, localFilesApi } from "@/lib/api";
+import { useCheckAllUpdates } from "@/hooks/use-updates";
 
 export function Header() {
   const { mutate } = useSWRConfig();
   const [refreshing, setRefreshing] = useState(false);
-  const [checking, setChecking] = useState(false);
+  const { running: checking, start: handleCheckUpdates } = useCheckAllUpdates({ resume: true });
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -36,24 +37,6 @@ export function Header() {
       setRefreshing(false);
       mutate("/api/mods");
       mutate("/api/fluffy/candidates");
-    }
-  };
-
-  const handleCheckUpdates = async () => {
-    setChecking(true);
-    try {
-      const updates = await updatesApi.checkAll();
-      const withUpdates = updates.filter((u) => u.update_available);
-      if (withUpdates.length > 0) {
-        toast.info(`${withUpdates.length} update(s) available`);
-      } else {
-        toast.success("All mods are up to date");
-      }
-    } catch {
-      toast.error("Failed to check for updates");
-    } finally {
-      setChecking(false);
-      mutate("/api/mods");
     }
   };
 

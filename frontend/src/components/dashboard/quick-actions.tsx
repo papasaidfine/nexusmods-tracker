@@ -12,36 +12,18 @@ import {
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { updatesApi, localFilesApi } from "@/lib/api";
+import { localFilesApi } from "@/lib/api";
+import { useCheckAllUpdates } from "@/hooks/use-updates";
 import { cn } from "@/lib/utils";
 
 interface QuickActionsProps {
-  onUpdatesChecked?: () => void;
   onScanComplete?: () => void;
 }
 
-export function QuickActions({ onUpdatesChecked, onScanComplete }: QuickActionsProps) {
+export function QuickActions({ onScanComplete }: QuickActionsProps) {
   const router = useRouter();
-  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const { running: checkingUpdates, start: handleCheckUpdates } = useCheckAllUpdates();
   const [scanning, setScanning] = useState(false);
-
-  async function handleCheckUpdates() {
-    setCheckingUpdates(true);
-    try {
-      const updates = await updatesApi.checkAll();
-      const withUpdates = updates.filter((u) => u.update_available);
-      if (withUpdates.length > 0) {
-        toast.info(`${withUpdates.length} update(s) available`);
-      } else {
-        toast.success("All mods are up to date");
-      }
-      onUpdatesChecked?.();
-    } catch {
-      toast.error("Failed to check for updates");
-    } finally {
-      setCheckingUpdates(false);
-    }
-  }
 
   async function handleScanFiles() {
     setScanning(true);

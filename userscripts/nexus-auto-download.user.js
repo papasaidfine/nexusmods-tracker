@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexusmods Tracker: auto slow download
 // @namespace    nexusmods-tracker
-// @version      1.2
+// @version      1.3
 // @description  Clicks "Slow download" on file pages opened by Nexusmods Tracker, then closes the tab
 // @match        https://www.nexusmods.com/*/mods/*
 // @match        https://nexusmods.com/*/mods/*
@@ -24,8 +24,9 @@
 
   const POLL_MS = 250;
   const CLICK_DELAY_MS = 500 + Math.random() * 500; // short human-like pause; tabs are already 2s apart
-  const CLOSE_AFTER_CLICK_MS = 12000; // after the free-user countdown (~5s) the download has started
-  const GIVE_UP_MS = 60000;
+  const CLOSE_AFTER_CLICK_MS = 6000;
+  const MAX_EXTRA_WAIT_MS = 15000; // longest extra wait while a countdown is still showing
+  const GIVE_UP_MS = 20000;
 
   function isSlowDownload(el) {
     const text = (el.textContent || "").toLowerCase();
@@ -59,6 +60,28 @@
     bannerEl.textContent = `Nexusmods Tracker: ${message}`;
   }
 
+  // Free downloads may show a short countdown before the file starts; closing the tab
+  // during it would cancel the download. Nexus's markup isn't fixed, so match text.
+  const COUNTDOWN = /(download|begin|start)[^.\n]{0,60}?\b\d+\s*(s\b|sec|second)/i;
+  function countdownShowing() {
+    return COUNTDOWN.test(document.body?.innerText || "");
+  }
+
+  function closeWhenStarted() {
+    const deadline = Date.now() + MAX_EXTRA_WAIT_MS;
+    let waited = false;
+    const check = setInterval(() => {
+      if (countdownShowing() && Date.now() < deadline) {
+        waited = true;
+        banner("waiting for the download countdown...");
+        return;
+      }
+      clearInterval(check);
+      // After a countdown, give the browser a moment to start the file
+      setTimeout(() => window.close(), waited ? 2000 : 0);
+    }, 500);
+  }
+
   banner("looking for the Slow download button...");
   const started = Date.now();
   const timer = setInterval(() => {
@@ -70,12 +93,12 @@
         button.click();
         sessionStorage.removeItem(MARK);
         banner("download started; this tab closes shortly");
-        setTimeout(() => window.close(), CLOSE_AFTER_CLICK_MS);
+        setTimeout(closeWhenStarted, CLOSE_AFTER_CLICK_MS);
       }, CLICK_DELAY_MS);
     } else if (Date.now() - started > GIVE_UP_MS) {
       clearInterval(timer);
       sessionStorage.removeItem(MARK);
-      banner("no Slow download button found; download this file manually");
+      banner("no Slow download button found within 20s; download this file manually");
     }
   }, POLL_MS);
 })();

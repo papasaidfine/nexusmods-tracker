@@ -8,7 +8,7 @@ import { QuickActions } from "@/components/dashboard/quick-actions";
 import { AlertCircle } from "lucide-react";
 
 export default function DashboardPage() {
-  const { mods, isLoading: modsLoading, isError: modsError, mutate: mutateMods } = useMods();
+  const { mods, isLoading: modsLoading, isError: modsError } = useMods();
   const { files, isLoading: filesLoading, isError: filesError, mutate: mutateFiles } = useLocalFiles();
 
   const isLoading = modsLoading || filesLoading;
@@ -18,10 +18,6 @@ export default function DashboardPage() {
   const updatesAvailable = mods?.filter((m) => m.update_available).length ?? 0;
   const totalFiles = files?.length ?? 0;
   const unmappedFiles = files?.filter((f) => !f.mapped).length ?? 0;
-
-  function handleUpdatesChecked() {
-    mutateMods();
-  }
 
   function handleScanComplete() {
     mutateFiles();
@@ -60,7 +56,6 @@ export default function DashboardPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <RecentUpdates mods={mods} isLoading={modsLoading} />
         <QuickActions
-          onUpdatesChecked={handleUpdatesChecked}
           onScanComplete={handleScanComplete}
         />
       </div>

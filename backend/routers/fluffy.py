@@ -5,6 +5,7 @@ Flow: prepare (scan new archives, write an uninstall and an install preset, rest
 Fluffy) -> user clicks the two presets in Fluffy -> session reports progress from
 installed.ini -> finalize (promote updates in the DB, delete old archives).
 """
+import collections
 import json
 import os
 import re
@@ -210,7 +211,12 @@ def list_candidates():
             "installed_count": fluffy.count_installed_from(mod["local_file"], installed, cache),
         })
     candidates.sort(key=lambda c: ((c["mod_name"] or "").lower(), c["old_archive"]))
-    return {"candidates": candidates}
+
+    # Options installed in Fluffy for every tracked mod, for the "In Fluffy" view
+    archive_of = {c.mod_id: c.archive for c in cache}
+    per_archive = collections.Counter(archive_of.get(o.mod_id) for o in installed)
+    installed_counts = {m["id"]: per_archive[m["local_file"]] for m in mods if per_archive[m["local_file"]]}
+    return {"candidates": candidates, "installed_counts": installed_counts}
 
 
 @router.get("/session")

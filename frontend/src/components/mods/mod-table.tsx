@@ -1,13 +1,12 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useState } from "react";
 import Link from "next/link";
 import { formatDistanceToNow, format } from "date-fns";
 import { toast } from "sonner";
 import { modsApi, updatesApi } from "@/lib/api";
-import { cn, openUrlsStaggered } from "@/lib/utils";
+import { cn, openUrlsInBatches, parseServerDate } from "@/lib/utils";
 import type { FluffyCandidate, Mod } from "@/lib/types";
-import { UpdateBadge } from "@/components/mods/update-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,10 +19,8 @@ import {
 } from "@/components/ui/table";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -38,6 +35,7 @@ import {
 import { Input } from "@/components/ui/input";
 import {
   AlertTriangleIcon,
+  ArrowRightIcon,
   ArrowUpDownIcon,
   ArrowUpIcon,
   ArrowDownIcon,
@@ -45,9 +43,9 @@ import {
   ChevronRightIcon,
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
+  CircleCheckIcon,
   DownloadIcon,
   EyeIcon,
-  FilterIcon,
   RefreshCwIcon,
   Loader2Icon,
   MoreHorizontalIcon,
@@ -62,6 +60,8 @@ interface ModTableProps {
   onMutate: () => void;
   /** Fluffy update readiness per mod DB id (only mods with a pending update) */
   fluffy?: Map<number, FluffyCandidate>;
+  /** Options installed in Fluffy per mod DB id */
+  installedCounts?: Map<number, number>;
   fluffyBusy?: boolean;
   onFluffyUpdate?: (modDbIds: number[]) => void;
 }
@@ -76,6 +76,16 @@ type SortField =
   | "update_available";
 
 type SortDirection = "asc" | "desc";
+
+/** Workflow views: what the user is doing rather than raw columns */
+type View = "all" | "installed" | "updates" | "downloaded";
+
+const VIEWS: { key: View; label: string; hint: string }[] = [
+  { key: "all", label: "All", hint: "Every tracked file" },
+  { key: "installed", label: "In Fluffy", hint: "Files with options installed in Fluffy" },
+  { key: "updates", label: "Updates", hint: "Files with a newer version on Nexusmods" },
+  { key: "downloaded", label: "Ready", hint: "Updates downloaded and ready for Update in Fluffy" },
+];
 
 interface ModGroup {
   modId: number;
@@ -93,34 +103,57 @@ interface AuthorGroup {
 
 const UNKNOWN_AUTHOR = "Unknown author";
 
-const DOWNLOAD_PAGE_INTERVAL_MS = 2000;
+/** Be gentle with Nexusmods: 5 pages 2s apart, then a 10s pause */
+const DOWNLOAD_SCHEDULE = { batchSize: 5, intervalMs: 2000, batchPauseMs: 10000 };
 
 /** File page on Nexusmods; nmt=1 lets the tracker's userscript click "Slow download" */
 function getNexusmodsDownloadUrl(game: string, modId: number, fileId: number) {
   return `https://www.nexusmods.com/${game}/mods/${modId}?tab=files&file_id=${fileId}&nmt=1`;
 }
 
-function formatDate(dateStr: string | null) {
-  if (!dateStr) return "—";
-  try {
-    return format(new Date(dateStr), "MMM d, yyyy");
-  } catch {
-    return "—";
-  }
-}
-
 function formatRelativeDate(dateStr: string | null) {
   if (!dateStr) return "—";
   try {
-    return formatDistanceToNow(new Date(dateStr), { addSuffix: true });
+    return formatDistanceToNow(parseServerDate(dateStr), { addSuffix: true });
   } catch {
     return "—";
   }
 }
 
-export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }: ModTableProps) {
-  const downloadedIds = (files: Mod[]) =>
-    files.filter((m) => fluffy?.get(m.id)?.new_archive).map((m) => m.id);
+/** Compact counts shown on author and mod rows */
+function GroupSummary({ updates, ready, installed }: { updates: number; ready: number; installed: number }) {
+  return (
+    <span className="flex items-center gap-2 text-xs">
+      {updates > 0 && (
+        <span className="font-medium text-amber-600 dark:text-amber-400">
+          {updates} update{updates !== 1 ? "s" : ""}
+        </span>
+      )}
+      {ready > 0 && (
+        <span className="font-medium text-emerald-600 dark:text-emerald-400">{ready} ready</span>
+      )}
+      {installed > 0 && <span className="text-muted-foreground">{installed} in Fluffy</span>}
+    </span>
+  );
+}
+
+export function ModTable({
+  mods,
+  onMutate,
+  fluffy,
+  installedCounts,
+  fluffyBusy,
+  onFluffyUpdate,
+}: ModTableProps) {
+  const isDownloaded = (m: Mod) => !!(m.update_available && fluffy?.get(m.id)?.new_archive);
+  const installedOf = (m: Mod) => installedCounts?.get(m.id) ?? 0;
+  const downloadedIds = (files: Mod[]) => files.filter(isDownloaded).map((m) => m.id);
+  const sumInstalled = (files: Mod[]) => files.reduce((n, m) => n + installedOf(m), 0);
+  const matchesView = (m: Mod, v: View) =>
+    v === "all" ||
+    (v === "installed" && installedOf(m) > 0) ||
+    (v === "updates" && m.update_available) ||
+    (v === "downloaded" && isDownloaded(m));
 
   const [sortField, setSortField] = useState<SortField>("mod_name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
@@ -132,29 +165,18 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
   const [deleteTarget, setDeleteTarget] = useState<Mod | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<Set<string>>(new Set());
-  const [authorFilter, setAuthorFilter] = useState<Set<string>>(new Set());
-  const [statusFilter, setStatusFilter] = useState<"all" | "update" | "current">("all");
+  const [view, setView] = useState<View>("all");
+  // While searching or viewing a subset, groups open by default so matches are visible
+  const filtering = search !== "" || view !== "all";
 
-  // Compute distinct values for filter dropdowns
-  const distinctCategories = useMemo(
-    () => [...new Set(mods.map((m) => m.category_name).filter(Boolean))] as string[],
-    [mods]
-  );
-  const distinctAuthors = useMemo(
-    () => [...new Set(mods.map((m) => m.author).filter(Boolean))].sort() as string[],
-    [mods]
-  );
-
-  const activeFilterCount =
-    (categoryFilter.size > 0 ? 1 : 0) +
-    (authorFilter.size > 0 ? 1 : 0) +
-    (statusFilter !== "all" ? 1 : 0);
-
-  const clearAllFilters = () => {
-    setCategoryFilter(new Set());
-    setAuthorFilter(new Set());
-    setStatusFilter("all");
+  // Filtering flips the default expansion; reset manual toggles when it starts or stops
+  const applyFilters = (nextSearch: string, nextView: View) => {
+    if ((nextSearch !== "" || nextView !== "all") !== filtering) {
+      setToggledAuthors(new Set());
+      setToggledGroups(new Set());
+    }
+    setSearch(nextSearch);
+    setView(nextView);
   };
 
   const handleSort = (field: SortField) => {
@@ -179,13 +201,10 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
       })
     : mods;
 
-  const filteredMods = searchedMods.filter((m) => {
-    if (categoryFilter.size > 0 && !categoryFilter.has(m.category_name || "")) return false;
-    if (authorFilter.size > 0 && !authorFilter.has(m.author || "")) return false;
-    if (statusFilter === "update" && !m.update_available) return false;
-    if (statusFilter === "current" && m.update_available) return false;
-    return true;
-  });
+  const viewCounts = Object.fromEntries(
+    VIEWS.map((v) => [v.key, searchedMods.filter((m) => matchesView(m, v.key)).length])
+  ) as Record<View, number>;
+  const filteredMods = searchedMods.filter((m) => matchesView(m, view));
 
   const sortedMods = [...filteredMods].sort((a, b) => {
     const dir = sortDirection === "asc" ? 1 : -1;
@@ -245,8 +264,7 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
     return a.author.localeCompare(b.author, undefined, { sensitivity: "base" }) * authorDir;
   });
 
-  const isAuthorExpanded = (author: string) =>
-    (search !== "") !== toggledAuthors.has(author);
+  const isAuthorExpanded = (author: string) => filtering !== toggledAuthors.has(author);
 
   const toggleAuthor = (author: string) => {
     setToggledAuthors((prev) => {
@@ -257,8 +275,7 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
     });
   };
 
-  const isGroupExpanded = (modId: number) =>
-    (search !== "") !== toggledGroups.has(modId);
+  const isGroupExpanded = (modId: number) => filtering !== toggledGroups.has(modId);
 
   const toggleModGroup = (modId: number) => {
     setToggledGroups((prev) => {
@@ -269,30 +286,46 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
     });
   };
 
+  const toDownload = (files: Mod[]) =>
+    files.filter((m) => m.update_available && m.latest_file_id && !isDownloaded(m));
+
   const handleDownloadGroup = (group: { files: Mod[] }) => {
-    const updatable = group.files.filter((m) => m.update_available && m.latest_file_id);
+    const updatable = toDownload(group.files);
     if (updatable.length === 0) {
       toast.info("No updates available to download");
       return;
     }
     const urls = updatable.map((mod) => getNexusmodsDownloadUrl(mod.game, mod.mod_id, mod.latest_file_id!));
     const popupHint = "Allow pop-ups for this site (icon in the address bar) and try again.";
+    const total = new Set(urls).size;
+    const toastId = `download-${Date.now()}`;
     let warned = false;
-    const opened = openUrlsStaggered(urls, DOWNLOAD_PAGE_INTERVAL_MS, () => {
-      if (warned) return;
-      warned = true;
-      toast.warning(`Browser blocked some download pages. ${popupHint}`);
+    const progress = (count: number) =>
+      count >= total
+        ? toast.success(`Opened ${total} download page${total > 1 ? "s" : ""}`, {
+            id: toastId,
+            action: undefined,
+          })
+        : toast.loading(`Opening download pages ${count}/${total} (5 at a time)`, {
+            id: toastId,
+            action: { label: "Stop", onClick: () => stopAll() },
+          });
+    const stop = openUrlsInBatches(urls, DOWNLOAD_SCHEDULE, {
+      onOpened: progress,
+      onBlocked: () => {
+        if (warned) return;
+        warned = true;
+        toast.warning(`Browser blocked some download pages. ${popupHint}`);
+      },
     });
-    if (!opened) {
+    if (!stop) {
       toast.warning(`Browser blocked the download page. ${popupHint}`);
       return;
     }
-    const count = new Set(urls).size;
-    toast.success(
-      count > 1
-        ? `Opening ${count} download pages, one every ${DOWNLOAD_PAGE_INTERVAL_MS / 1000}s`
-        : "Opened download page"
-    );
+    const stopAll = () => {
+      stop();
+      toast.info("Stopped opening download pages", { id: toastId });
+    };
   };
 
   const handleCheckFile = async (mod: Mod) => {
@@ -374,54 +407,6 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
     );
   };
 
-  const FilterableHeader = ({
-    field,
-    children,
-    filterContent,
-    isFiltered,
-  }: {
-    field: SortField;
-    children: React.ReactNode;
-    filterContent: React.ReactNode;
-    isFiltered: boolean;
-  }) => {
-    const isActive = sortField === field;
-    return (
-      <TableHead>
-        <div className="flex items-center gap-0.5">
-          <button
-            className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
-            onClick={() => handleSort(field)}
-          >
-            {children}
-            {isActive ? (
-              sortDirection === "asc" ? (
-                <ArrowUpIcon className="size-3" />
-              ) : (
-                <ArrowDownIcon className="size-3" />
-              )
-            ) : (
-              <ArrowUpDownIcon className="size-3 opacity-40" />
-            )}
-          </button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className={cn(
-                "p-0.5 rounded hover:bg-muted transition-colors",
-                isFiltered ? "text-primary" : "text-muted-foreground opacity-40 hover:opacity-100"
-              )}>
-                <FilterIcon className="size-3" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              {filterContent}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </TableHead>
-    );
-  };
-
   if (mods.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
@@ -441,7 +426,7 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
     // or is toggled off when searching. Expanding does the inverse. Mod groups
     // go back to their default either way, so expanding lists mods, not files.
     const wantExpanded = allCollapsed;
-    const defaultExpanded = search !== "";
+    const defaultExpanded = filtering;
     setToggledAuthors(
       wantExpanded === defaultExpanded
         ? new Set()
@@ -452,29 +437,50 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
 
   return (
     <>
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center gap-3 mb-2">
         <div className="relative w-64">
           <SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
           <Input
             placeholder="Search mods..."
             value={search}
-            onChange={(e) => {
-              // Searching flips the default expansion; reset manual toggles
-              // when entering or leaving search mode.
-              if ((e.target.value !== "") !== (search !== "")) {
-                setToggledAuthors(new Set());
-              }
-              setSearch(e.target.value);
-            }}
+            onChange={(e) => applyFilters(e.target.value, view)}
             className="pl-9 h-8"
           />
         </div>
-        {activeFilterCount > 0 && (
-          <Button variant="ghost" size="sm" onClick={clearAllFilters}>
-            <FilterIcon className="size-4" />
-            Clear {activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""}
-          </Button>
-        )}
+        <div className="inline-flex rounded-md border p-0.5 gap-0.5" role="tablist">
+          {VIEWS.map((v) => (
+            <button
+              key={v.key}
+              role="tab"
+              aria-selected={view === v.key}
+              title={v.hint}
+              onClick={() => applyFilters(search, v.key)}
+              className={cn(
+                "px-3 py-1 text-sm rounded-sm transition-colors",
+                view === v.key
+                  ? "bg-muted text-foreground font-medium"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {v.label}
+              <span className="ml-1.5 text-xs tabular-nums text-muted-foreground">
+                {viewCounts[v.key]}
+              </span>
+            </button>
+          ))}
+        </div>
+        {/* Downloads whatever is pending in the current tab and search */}
+        <Button
+          variant="outline"
+          size="sm"
+          className="ml-auto"
+          onClick={() => handleDownloadGroup({ files: filteredMods })}
+          disabled={toDownload(filteredMods).length === 0}
+          title="Open download pages for updates in this view that aren't downloaded yet"
+        >
+          <DownloadIcon />
+          Download updates ({toDownload(filteredMods).length})
+        </Button>
         <Button variant="ghost" size="sm" onClick={toggleCollapseAll}>
           {allCollapsed ? (
             <ChevronsUpDownIcon className="size-4" />
@@ -489,117 +495,7 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
           <TableRow>
             <SortableHeader field="mod_name">File</SortableHeader>
             <SortableHeader field="version">Version</SortableHeader>
-            <FilterableHeader
-              field="author"
-              isFiltered={authorFilter.size > 0}
-              filterContent={
-                <>
-                  <DropdownMenuLabel>Filter by Author</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <div className="max-h-56 overflow-auto">
-                    {distinctAuthors.map((author) => (
-                      <DropdownMenuCheckboxItem
-                        key={author}
-                        checked={authorFilter.has(author)}
-                        onCheckedChange={() => {
-                          setAuthorFilter((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(author)) next.delete(author);
-                            else next.add(author);
-                            return next;
-                          });
-                        }}
-                        onSelect={(e) => e.preventDefault()}
-                      >
-                        {author}
-                      </DropdownMenuCheckboxItem>
-                    ))}
-                  </div>
-                  {authorFilter.size > 0 && (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={() => setAuthorFilter(new Set())}>
-                        Clear
-                      </DropdownMenuItem>
-                    </>
-                  )}
-                </>
-              }
-            >
-              Author
-            </FilterableHeader>
-            <FilterableHeader
-              field="category_name"
-              isFiltered={categoryFilter.size > 0}
-              filterContent={
-                <>
-                  <DropdownMenuLabel>Filter by Category</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {distinctCategories.map((cat) => (
-                    <DropdownMenuCheckboxItem
-                      key={cat}
-                      checked={categoryFilter.has(cat)}
-                      onCheckedChange={() => {
-                        setCategoryFilter((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(cat)) next.delete(cat);
-                          else next.add(cat);
-                          return next;
-                        });
-                      }}
-                      onSelect={(e) => e.preventDefault()}
-                    >
-                      {cat}
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                  {categoryFilter.size > 0 && (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={() => setCategoryFilter(new Set())}>
-                        Clear
-                      </DropdownMenuItem>
-                    </>
-                  )}
-                </>
-              }
-            >
-              Category
-            </FilterableHeader>
-            <SortableHeader field="uploaded_time">Uploaded</SortableHeader>
-            <SortableHeader field="last_checked">Last Checked</SortableHeader>
-            <FilterableHeader
-              field="update_available"
-              isFiltered={statusFilter !== "all"}
-              filterContent={
-                <>
-                  <DropdownMenuLabel>Filter by Status</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuCheckboxItem
-                    checked={statusFilter === "all"}
-                    onCheckedChange={() => setStatusFilter("all")}
-                    onSelect={(e) => e.preventDefault()}
-                  >
-                    All
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={statusFilter === "update"}
-                    onCheckedChange={() => setStatusFilter("update")}
-                    onSelect={(e) => e.preventDefault()}
-                  >
-                    Update Available
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem
-                    checked={statusFilter === "current"}
-                    onCheckedChange={() => setStatusFilter("current")}
-                    onSelect={(e) => e.preventDefault()}
-                  >
-                    Up to Date
-                  </DropdownMenuCheckboxItem>
-                </>
-              }
-            >
-              Status
-            </FilterableHeader>
+            <SortableHeader field="update_available">Status</SortableHeader>
             <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
@@ -607,6 +503,8 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
           {authorGroups.map((authorGroup) => {
             const authorExpanded = isAuthorExpanded(authorGroup.author);
             const authorUpdates = authorGroup.files.filter((m) => m.update_available).length;
+            const authorReady = downloadedIds(authorGroup.files);
+            const authorToDownload = toDownload(authorGroup.files).length;
             return (
               <Fragment key={`author-${authorGroup.author}`}>
                 {/* Author group header */}
@@ -614,7 +512,7 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
                   className="bg-muted hover:bg-muted cursor-pointer"
                   onClick={() => toggleAuthor(authorGroup.author)}
                 >
-                  <TableCell colSpan={7} className="py-2">
+                  <TableCell colSpan={3} className="py-2">
                     <div className="flex items-center gap-2">
                       {authorExpanded ? (
                         <ChevronDownIcon className="size-4 text-muted-foreground shrink-0" />
@@ -624,14 +522,14 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
                       <UserIcon className="size-4 text-muted-foreground shrink-0" />
                       <span className="font-semibold">{authorGroup.author}</span>
                       <span className="text-xs text-muted-foreground">
-                        ({authorGroup.mods.length} mod{authorGroup.mods.length !== 1 ? "s" : ""},{" "}
-                        {authorGroup.files.length} file{authorGroup.files.length !== 1 ? "s" : ""})
+                        {authorGroup.mods.length} mod{authorGroup.mods.length !== 1 ? "s" : ""} ·{" "}
+                        {authorGroup.files.length} file{authorGroup.files.length !== 1 ? "s" : ""}
                       </span>
-                      {authorUpdates > 0 && (
-                        <span className="text-xs font-medium text-orange-500">
-                          {authorUpdates} update{authorUpdates !== 1 ? "s" : ""} available
-                        </span>
-                      )}
+                      <GroupSummary
+                        updates={authorUpdates}
+                        ready={authorReady.length}
+                        installed={sumInstalled(authorGroup.files)}
+                      />
                     </div>
                   </TableCell>
                   <TableCell className="text-right py-2" onClick={(e) => e.stopPropagation()}>
@@ -649,23 +547,35 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => handleDownloadGroup(authorGroup)}
-                          disabled={authorUpdates === 0}
+                          disabled={authorToDownload === 0}
                         >
                           <DownloadIcon />
-                          Download Updates
+                          Download Updates ({authorToDownload})
                         </DropdownMenuItem>
+                        {onFluffyUpdate && (
+                          <DropdownMenuItem
+                            onClick={() => onFluffyUpdate(authorReady)}
+                            disabled={fluffyBusy || authorReady.length === 0}
+                          >
+                            <PackageCheckIcon />
+                            Update in Fluffy ({authorReady.length})
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
-                {authorExpanded && authorGroup.mods.map((group) => (
+                {authorExpanded && authorGroup.mods.map((group) => {
+                  const ready = downloadedIds(group.files);
+                  const pending = toDownload(group.files).length;
+                  return (
                   <Fragment key={`group-${group.modId}`}>
                     {/* Mod group header */}
                     <TableRow
                       className="bg-muted/50 hover:bg-muted/50 cursor-pointer"
                       onClick={() => toggleModGroup(group.modId)}
                     >
-                      <TableCell colSpan={7} className="py-2 pl-6">
+                      <TableCell colSpan={3} className="py-2 pl-6">
                         <div className="flex items-center gap-2">
                           {isGroupExpanded(group.modId) ? (
                             <ChevronDownIcon className="size-4 text-muted-foreground shrink-0" />
@@ -682,71 +592,59 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
                             {group.modName}
                           </a>
                           <span className="text-xs text-muted-foreground">
-                            ({group.files.length} file{group.files.length !== 1 ? "s" : ""})
+                            {group.files.length} file{group.files.length !== 1 ? "s" : ""}
                           </span>
-                          {(() => {
-                            const updatable = group.files.filter((m) => m.update_available).length;
-                            if (updatable > 0) {
-                              return (
-                                <>
-                                  <span className="text-xs font-medium text-orange-500">
-                                    {updatable}/{group.files.length} update{updatable !== 1 ? "s" : ""} available
-                                  </span>
-                                  {downloadedIds(group.files).length > 0 && (
-                                    <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                                      {downloadedIds(group.files).length} downloaded
-                                    </span>
-                                  )}
-                                </>
-                              );
-                            }
-                            return null;
-                          })()}
+                          <GroupSummary
+                            updates={group.files.filter((m) => m.update_available).length}
+                            ready={ready.length}
+                            installed={sumInstalled(group.files)}
+                          />
                         </div>
                       </TableCell>
                       <TableCell className="text-right py-2" onClick={(e) => e.stopPropagation()}>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon-xs">
-                              <MoreHorizontalIcon />
-                              <span className="sr-only">Group Actions</span>
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onClick={() => handleCheckGroup(group)}
-                            >
-                              <RefreshCwIcon />
-                              Check Update
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => handleDownloadGroup(group)}
-                              disabled={!group.files.some((m) => m.update_available && m.latest_file_id)}
-                            >
+                        <div className="flex items-center justify-end gap-1">
+                          {pending > 0 && (
+                            <Button variant="outline" size="xs" onClick={() => handleDownloadGroup(group)}>
                               <DownloadIcon />
-                              Download Updates
-                            </DropdownMenuItem>
-                            {onFluffyUpdate && (
-                              <DropdownMenuItem
-                                onClick={() => onFluffyUpdate(downloadedIds(group.files))}
-                                disabled={fluffyBusy || downloadedIds(group.files).length === 0}
-                              >
-                                <PackageCheckIcon />
-                                Update in Fluffy
+                              Download{pending > 1 ? ` ${pending}` : ""}
+                            </Button>
+                          )}
+                          {onFluffyUpdate && ready.length > 0 && (
+                            <Button
+                              size="xs"
+                              onClick={() => onFluffyUpdate(ready)}
+                              disabled={fluffyBusy}
+                            >
+                              <PackageCheckIcon />
+                              Update in Fluffy{ready.length > 1 ? ` ${ready.length}` : ""}
+                            </Button>
+                          )}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon-xs">
+                                <MoreHorizontalIcon />
+                                <span className="sr-only">Group Actions</span>
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handleCheckGroup(group)}>
+                                <RefreshCwIcon />
+                                Check Update
                               </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       </TableCell>
                     </TableRow>
                     {/* File rows */}
                     {isGroupExpanded(group.modId) && group.files.map((mod) => (
                       <TableRow key={mod.id}>
-                        <TableCell className="max-w-[240px] pl-12">
+                        <TableCell className="max-w-[520px] pl-12">
                           <div className="flex items-center gap-1.5">
                             <Link
                               href={`/mods/${mod.id}`}
                               className="hover:underline text-foreground font-medium block truncate"
+                              title={mod.local_file}
                             >
                               {mod.name || mod.local_file}
                             </Link>
@@ -757,63 +655,64 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
                             )}
                           </div>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="whitespace-nowrap">
                           <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
                             {mod.version || "—"}
                           </code>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {mod.author || "—"}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {mod.category_name || "—"}
-                        </TableCell>
-                        <TableCell
-                          className="text-muted-foreground"
-                          title={mod.uploaded_time ? format(new Date(mod.uploaded_time), "PPpp") : undefined}
-                        >
-                          {formatDate(mod.uploaded_time)}
-                        </TableCell>
-                        <TableCell
-                          className="text-muted-foreground"
-                          title={mod.last_checked ? format(new Date(mod.last_checked), "PPpp") : undefined}
-                        >
-                          {formatRelativeDate(mod.last_checked)}
-                        </TableCell>
-                        <TableCell>
-                          {mod.update_available && mod.latest_file_id ? (
-                            <a
-                              href={getNexusmodsDownloadUrl(mod.game, mod.mod_id, mod.latest_file_id)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              <UpdateBadge updateAvailable={true} />
-                            </a>
-                          ) : (
-                            <UpdateBadge updateAvailable={mod.update_available} />
+                          {!!mod.update_available && mod.latest_version && (
+                            <>
+                              <ArrowRightIcon className="inline size-3 mx-1 text-muted-foreground" />
+                              <code className="text-xs bg-amber-500/15 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded">
+                                {mod.latest_version}
+                              </code>
+                            </>
                           )}
-                          {(() => {
-                            const info = fluffy?.get(mod.id);
-                            if (!info) return null;
-                            return (
-                              <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-                                {info.new_archive ? (
-                                  <Badge
-                                    variant="outline"
-                                    className="border-emerald-500 text-emerald-600 dark:text-emerald-400"
-                                    title={info.new_archive}
-                                  >
-                                    Downloaded
-                                  </Badge>
-                                ) : (
-                                  <span>not downloaded</span>
-                                )}
-                                {info.installed_count > 0 && (
-                                  <span>· {info.installed_count} options in Fluffy</span>
-                                )}
-                              </div>
-                            );
-                          })()}
+                        </TableCell>
+                        <TableCell
+                          title={
+                            mod.last_checked
+                              ? `Last checked ${formatRelativeDate(mod.last_checked)} (${format(parseServerDate(mod.last_checked), "PPpp")})`
+                              : "Never checked"
+                          }
+                        >
+                          <div className="flex items-center gap-2 text-xs">
+                            {!mod.update_available ? (
+                              <span className="inline-flex items-center gap-1 text-muted-foreground">
+                                <CircleCheckIcon className="size-3.5" />
+                                Up to date
+                              </span>
+                            ) : isDownloaded(mod) ? (
+                              <Badge
+                                variant="outline"
+                                className="border-emerald-500/60 text-emerald-600 dark:text-emerald-400"
+                                title={fluffy?.get(mod.id)?.new_archive ?? undefined}
+                              >
+                                <PackageCheckIcon />
+                                Ready
+                              </Badge>
+                            ) : mod.latest_file_id ? (
+                              <a
+                                href={getNexusmodsDownloadUrl(mod.game, mod.mod_id, mod.latest_file_id)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                <Badge
+                                  variant="outline"
+                                  className="border-amber-500/60 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
+                                >
+                                  <DownloadIcon />
+                                  Download
+                                </Badge>
+                              </a>
+                            ) : (
+                              <span className="text-amber-600 dark:text-amber-400">Update</span>
+                            )}
+                            {installedOf(mod) > 0 && (
+                              <span className="text-muted-foreground">
+                                {installedOf(mod)} in Fluffy
+                              </span>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-right">
                           <DropdownMenu>
@@ -848,7 +747,8 @@ export function ModTable({ mods, onMutate, fluffy, fluffyBusy, onFluffyUpdate }:
                       </TableRow>
                     ))}
                   </Fragment>
-                ))}
+                  );
+                })}
               </Fragment>
             );
           })}

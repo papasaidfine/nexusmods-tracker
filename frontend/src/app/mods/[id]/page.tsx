@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { useMod } from "@/hooks/use-mods";
 import { checkSingleUpdate } from "@/hooks/use-updates";
 import { modsApi } from "@/lib/api";
+import { parseServerDate } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { UpdateBadge } from "@/components/mods/update-badge";
 import { Button } from "@/components/ui/button";
@@ -37,7 +38,7 @@ import {
 function formatDate(dateStr: string | null) {
   if (!dateStr) return "—";
   try {
-    return format(new Date(dateStr), "PPpp");
+    return format(parseServerDate(dateStr), "PPpp");
   } catch {
     return "—";
   }
@@ -46,7 +47,7 @@ function formatDate(dateStr: string | null) {
 function formatRelative(dateStr: string | null) {
   if (!dateStr) return "";
   try {
-    return formatDistanceToNow(new Date(dateStr), { addSuffix: true });
+    return formatDistanceToNow(parseServerDate(dateStr), { addSuffix: true });
   } catch {
     return "";
   }

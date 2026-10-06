@@ -28,6 +28,10 @@ export default function ModsPage() {
     () => new Map(candidates?.candidates.map((c) => [c.mod_db_id, c]) ?? []),
     [candidates]
   );
+  const installedCounts = useMemo(
+    () => new Map(Object.entries(candidates?.installed_counts ?? {}).map(([id, n]) => [Number(id), n])),
+    [candidates]
+  );
   const downloaded = candidates?.candidates.filter((c) => c.new_archive) ?? [];
 
   const refreshAll = useCallback(() => {
@@ -112,6 +116,7 @@ export default function ModsPage() {
             mods={mods ?? []}
             onMutate={refreshAll}
             fluffy={fluffy}
+            installedCounts={installedCounts}
             fluffyBusy={preparing || !!session}
             onFluffyUpdate={handleFluffyUpdate}
           />

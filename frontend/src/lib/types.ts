@@ -88,6 +88,20 @@ export interface NexusmodsFile {
   file_name: string;
 }
 
+/** Background check of all tracked mods (GET/POST /api/updates/check-all) */
+export interface CheckAllJob {
+  running: boolean;
+  checked?: number;
+  total?: number;
+  /** Updates found by this run */
+  updates?: number;
+  /** All pending updates after the run */
+  pending?: number;
+  error?: string | null;
+  started_at?: string;
+  finished_at?: string | null;
+}
+
 export interface FluffyStatus {
   running: boolean | null;
   error: string | null;
@@ -110,6 +124,8 @@ export interface FluffyCandidate {
 
 export interface FluffyCandidates {
   candidates: FluffyCandidate[];
+  /** Options installed in Fluffy per tracked mod DB id (absent = none) */
+  installed_counts: Record<string, number>;
 }
 
 /** Fluffy option IDs are 64-bit, so they are passed as strings */

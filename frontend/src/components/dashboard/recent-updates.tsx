@@ -12,7 +12,7 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, parseServerDate } from "@/lib/utils";
 import type { Mod } from "@/lib/types";
 
 interface RecentUpdatesProps {
@@ -26,7 +26,7 @@ export function RecentUpdates({ mods, isLoading }: RecentUpdatesProps) {
     ?.filter((m) => m.last_checked)
     .sort(
       (a, b) =>
-        new Date(b.last_checked!).getTime() - new Date(a.last_checked!).getTime()
+        parseServerDate(b.last_checked!).getTime() - parseServerDate(a.last_checked!).getTime()
     )
     .slice(0, 5);
 
@@ -149,7 +149,7 @@ export function RecentUpdates({ mods, isLoading }: RecentUpdatesProps) {
                     </Link>
                   </div>
                   <span className="ml-2 shrink-0 text-xs text-muted-foreground">
-                    {formatDistanceToNow(new Date(mod.last_checked!), {
+                    {formatDistanceToNow(parseServerDate(mod.last_checked!), {
                       addSuffix: true,
                     })}
                   </span>

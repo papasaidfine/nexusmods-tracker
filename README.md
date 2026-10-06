@@ -68,7 +68,7 @@ Free Nexusmods accounts have to click "Slow download" on each file page. A
 1. With the backend running, open http://localhost:8000/userscript/nexus-auto-download.user.js
    and install it in Tampermonkey (it auto-updates from that URL).
 2. On the Mods page, **Download Updates** opens the file pages one every 2 seconds (allow
-   pop-ups for the tracker). The script clicks "Slow download" within about a second and closes the tab 12 s later.
+   pop-ups for the tracker). The script clicks "Slow download" within about a second and closes the tab 6 s later (longer if a download countdown is still showing).
    Pages you open yourself on Nexusmods are left alone.
 
 Automated clicking is a gray area under the Nexusmods terms of service; keep it to modest,

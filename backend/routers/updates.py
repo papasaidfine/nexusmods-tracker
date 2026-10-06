@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
+import threading
 from models import UpdateInfo
 from database import get_all_mods, update_mod
 from nexusmods_client import get_nexusmods_client
@@ -135,23 +136,16 @@ def _pick_period(mods: list) -> Optional[str]:
         return "1m"
     return None
 
-@router.get("/check", response_model=List[UpdateInfo])
-def check_all_updates():
-    """Check tracked mods for updates using the batch updated-mods endpoint.
-    Only queries individual mod files for mods that Nexusmods reports as recently updated."""
-    mods = get_all_mods()
-    if not mods:
-        return []
-
+def _mods_to_check(mods: list) -> tuple[list, Optional[str]]:
+    """Mods worth querying: those Nexusmods reports as updated since our oldest check
+    (one batch call per game), plus mods never checked. Returns (mods, period)."""
     client = get_nexusmods_client()
     period = _pick_period(mods)
 
-    # Group tracked mods by game
     by_game: dict[str, list[dict]] = {}
     for mod in mods:
         by_game.setdefault(mod["game"], []).append(mod)
 
-    # Fetch recently updated mod_ids per game (one API call per game)
     updated_mod_ids: set[int] = set()
     for game, game_mods in by_game.items():
         if period is None:
@@ -163,26 +157,71 @@ def check_all_updates():
             updated_mod_ids.update(entry.get("mod_id") for entry in updated)
         except Exception as e:
             print(f"[check-all] Failed to fetch updated mods for {game}: {e}")
-            # Fallback: check all mods for this game
             updated_mod_ids.update(mod["mod_id"] for mod in game_mods)
 
-    # Check mods whose mod_id appeared in the batch response,
-    # and always check mods that have never been checked before
+    targets = [m for m in mods if not m.get("last_checked") or m["mod_id"] in updated_mod_ids]
+    return targets, period
+
+
+def _check_all(on_progress=None) -> list:
+    mods = get_all_mods()
+    targets, period = _mods_to_check(mods)
     updates = []
-    checked = 0
-    skipped = 0
-    for mod in mods:
-        never_checked = not mod.get("last_checked")
-        if not never_checked and mod["mod_id"] not in updated_mod_ids:
-            skipped += 1
-            continue
-        checked += 1
+    for i, mod in enumerate(targets):
+        if on_progress:
+            on_progress(i, len(targets), len(updates))
         update_info = check_mod_update(mod, mods)
         if update_info:
             updates.append(update_info)
-
-    print(f"[check-all] period={period}, checked={checked}, skipped={skipped}, updates={len(updates)}")
+    print(f"[check-all] period={period}, checked={len(targets)}, skipped={len(mods) - len(targets)}, updates={len(updates)}")
     return updates
+
+
+@router.get("/check", response_model=List[UpdateInfo])
+def check_all_updates():
+    """Check tracked mods for updates in one request (slow; prefer the background job)."""
+    return _check_all()
+
+
+# Background check-all: a full check takes minutes, so it runs in a thread and the
+# UI polls progress instead of holding one long request open.
+_job_lock = threading.Lock()
+_job: dict = {"running": False}
+
+
+def _run_job() -> None:
+    def progress(checked: int, total: int, found: int) -> None:
+        _job.update(checked=checked, total=total, updates=found)
+
+    try:
+        updates = _check_all(progress)
+        pending = sum(1 for m in get_all_mods() if m.get("update_available"))
+        _job.update(checked=_job.get("total", 0), updates=len(updates), pending=pending)
+    except Exception as e:
+        _job["error"] = str(e)
+    finally:
+        _job.update(running=False, finished_at=datetime.now(timezone.utc).isoformat())
+
+
+@router.post("/check-all")
+def start_check_all():
+    """Start a background check of all tracked mods (no-op if one is running)."""
+    with _job_lock:
+        if not _job.get("running"):
+            _job.clear()
+            _job.update(
+                running=True, checked=0, total=0, updates=0, error=None,
+                started_at=datetime.now(timezone.utc).isoformat(), finished_at=None,
+            )
+            threading.Thread(target=_run_job, daemon=True).start()
+    return dict(_job)
+
+
+@router.get("/check-all")
+def check_all_status():
+    """Progress of the background check-all (running=False with no started_at if none ran)."""
+    return dict(_job)
+
 
 @router.get("/check/{mod_db_id}", response_model=UpdateInfo)
 def check_single_update(mod_db_id: int):
