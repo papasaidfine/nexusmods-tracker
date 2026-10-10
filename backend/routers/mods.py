@@ -4,11 +4,13 @@ Mods router - CRUD operations for tracked mods
 from fastapi import APIRouter, HTTPException
 from typing import List, Optional
 import os
+import shutil
 from datetime import datetime, timezone
 from models import Mod, ModCreate, ModUpdate
 from database import get_all_mods, get_mod_by_id, get_mod_by_file, create_mod, update_mod, delete_mod
 from nexusmods_client import get_nexusmods_client
-from paths import mod_file_path
+from paths import downloaded_path, mod_file_path
+import games
 
 router = APIRouter()
 
@@ -16,18 +18,38 @@ router = APIRouter()
 def list_mods():
     """List all tracked mods"""
     mods = get_all_mods()
-    mods_dir = os.getenv("MODS_DIR", "")
+    mods_dir = games.current().mods_dir
     for mod in mods:
         if mods_dir and mod.get("local_file"):
+            if not mod.get("local_file_mtime"):
+                _adopt_download(mod, mods_dir)
             mod["file_exists"] = os.path.exists(os.path.join(mods_dir, mod["local_file"]))
         else:
             mod["file_exists"] = None
     return mods
 
+def _adopt_download(mod: dict, mods_dir: str) -> None:
+    """Mods are registered when their download starts, so local_file_mtime is unset
+    until the file first lands in the Mods folder. Move it in from DOWNLOADS_DIR once the
+    browser finishes, then record its mtime so auto-detect can spot same-name
+    re-downloads."""
+    try:
+        path = mod_file_path(mods_dir, mod["local_file"])
+    except ValueError:
+        return
+    if not os.path.exists(path):
+        downloaded = downloaded_path(mod["local_file"])
+        if not downloaded:
+            return
+        shutil.move(downloaded, path)
+    mtime = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc).isoformat()
+    update_mod(mod["id"], {"local_file_mtime": mtime})
+    mod["local_file_mtime"] = mtime
+
 @router.post("/", response_model=Mod)
 def add_mod(mod_create: ModCreate):
     """Add a new mod to track"""
-    mods_dir = os.getenv("MODS_DIR", "")
+    mods_dir = games.current().mods_dir
     try:
         file_path = mod_file_path(mods_dir, mod_create.local_file)
     except ValueError as e:
@@ -103,15 +125,16 @@ def refresh_all_metadata():
 
 @router.post("/cleanup")
 def cleanup_orphans():
-    """Remove tracked mods whose local file no longer exists on disk"""
-    mods_dir = os.getenv("MODS_DIR", "")
-    if not mods_dir:
-        raise HTTPException(status_code=500, detail="MODS_DIR not configured")
+    """Remove tracked mods whose local file was on disk but no longer is"""
+    mods_dir = games.current().mods_dir
 
     mods = get_all_mods()
     removed = []
     for mod in mods:
         local_file = mod.get("local_file")
+        # No mtime yet: registered but still downloading, not missing
+        if not mod.get("local_file_mtime"):
+            continue
         if local_file and not os.path.exists(os.path.join(mods_dir, local_file)):
             delete_mod(mod["id"])
             removed.append({"id": mod["id"], "local_file": local_file, "mod_name": mod.get("mod_name")})
@@ -203,7 +226,7 @@ def apply_update(mod: dict, new_local_file: Optional[str] = None) -> dict:
     # Update local_file to the new filename (comes from the Nexusmods API, so validate it)
     new_local_file = new_local_file or mod.get("latest_file_name") or mod["local_file"]
     old_local_file = mod["local_file"]
-    mods_dir = os.getenv("MODS_DIR", "")
+    mods_dir = games.current().mods_dir
     try:
         new_file_path = mod_file_path(mods_dir, new_local_file)
     except ValueError as e:
@@ -263,7 +286,7 @@ def remove_mod(mod_db_id: int):
         raise HTTPException(status_code=404, detail="Mod not found")
 
     # Delete local file from disk
-    mods_dir = os.getenv("MODS_DIR", "")
+    mods_dir = games.current().mods_dir
     if mods_dir and mod.get("local_file"):
         try:
             file_path = mod_file_path(mods_dir, mod["local_file"])

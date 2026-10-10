@@ -4,11 +4,15 @@
 import useSWR from "swr";
 import { modsApi } from "@/lib/api";
 import type { Mod } from "@/lib/types";
+import { useGame } from "./use-game";
+
+export const modsKey = (game: string) => `/api/games/${game}/mods`;
 
 export function useMods() {
+  const game = useGame();
   const { data, error, isLoading, mutate } = useSWR<Mod[]>(
-    "/api/mods",
-    modsApi.list,
+    game ? modsKey(game) : null,
+    () => modsApi.list(game),
     {
       revalidateOnFocus: false,
       revalidateOnReconnect: true,
@@ -24,9 +28,10 @@ export function useMods() {
 }
 
 export function useMod(id: number | null) {
+  const game = useGame();
   const { data, error, isLoading, mutate } = useSWR<Mod>(
-    id ? `/api/mods/${id}` : null,
-    id ? () => modsApi.get(id) : null,
+    game && id ? `${modsKey(game)}/${id}` : null,
+    () => modsApi.get(game, id!),
     {
       revalidateOnFocus: false,
     }

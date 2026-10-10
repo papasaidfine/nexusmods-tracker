@@ -16,6 +16,9 @@ import type {
   FluffyCandidates,
   FluffySession,
   FluffyFinalizeResult,
+  InstallOrder,
+  Game,
+  ArmorOverview,
 } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -67,39 +70,48 @@ async function fetchApi<T>(
   }
 }
 
+/** Per-game endpoints live under /api/games/{game} */
+const g = (game: string, path: string) => `/api/games/${encodeURIComponent(game)}${path}`;
+
+/**
+ * Games API
+ */
+export const gamesApi = {
+  list: () => fetchApi<Game[]>("/api/games"),
+};
+
 /**
  * Mods API
  */
 export const modsApi = {
-  list: () => fetchApi<Mod[]>("/api/mods/"),
+  list: (game: string) => fetchApi<Mod[]>(g(game, "/mods/")),
 
-  get: (id: number) => fetchApi<Mod>(`/api/mods/${id}`),
+  get: (game: string, id: number) => fetchApi<Mod>(g(game, `/mods/${id}`)),
 
-  create: (data: ModCreate) =>
-    fetchApi<Mod>("/api/mods/", {
+  create: (game: string, data: ModCreate) =>
+    fetchApi<Mod>(g(game, "/mods/"), {
       method: "POST",
       body: JSON.stringify(data),
     }),
 
-  update: (id: number, data: ModUpdate) =>
-    fetchApi<Mod>(`/api/mods/${id}`, {
+  update: (game: string, id: number, data: ModUpdate) =>
+    fetchApi<Mod>(g(game, `/mods/${id}`), {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
 
-  delete: (id: number) =>
-    fetchApi<{ message: string }>(`/api/mods/${id}`, {
+  delete: (game: string, id: number) =>
+    fetchApi<{ message: string }>(g(game, `/mods/${id}`), {
       method: "DELETE",
     }),
 
-  cleanup: () =>
-    fetchApi<{ removed: number; details: Array<{ id: number; local_file: string; mod_name: string | null }> }>(
-      "/api/mods/cleanup",
+  cleanup: (game: string) =>
+    fetchApi<{ removed: number; details: Array<{ id: number; local_file: string; mod_name: string | null }> }>(g(game, "/mods/cleanup"),
       { method: "POST" }
     ),
 
-  markUpdated: (id: number) =>
-    fetchApi<Mod>(`/api/mods/${id}/mark-updated`, {
+  markUpdated: (game: string, id: number) =>
+    fetchApi<Mod>(g(game, `/mods/${id}/mark-updated`), {
       method: "POST",
     }),
 };
@@ -108,21 +120,20 @@ export const modsApi = {
  * Local Files API
  */
 export const localFilesApi = {
-  list: () => fetchApi<LocalFile[]>("/api/local-files/"),
+  list: (game: string) => fetchApi<LocalFile[]>(g(game, "/local-files/")),
 
-  scan: () =>
-    fetchApi<ScanResult>("/api/local-files/scan", {
+  scan: (game: string) =>
+    fetchApi<ScanResult>(g(game, "/local-files/scan"), {
       method: "POST",
     }),
 
-  delete: (filename: string) =>
-    fetchApi<{ message: string }>(`/api/local-files/${encodeURIComponent(filename)}`, {
+  delete: (game: string, filename: string) =>
+    fetchApi<{ message: string }>(g(game, `/local-files/${encodeURIComponent(filename)}`), {
       method: "DELETE",
     }),
 
-  autoDetect: () =>
-    fetchApi<{ updated: number; details: Array<{ mod_id: number; mod_name: string; old_file: string; new_file: string; version: string }> }>(
-      "/api/local-files/auto-detect",
+  autoDetect: (game: string) =>
+    fetchApi<{ updated: number; details: Array<{ mod_id: number; mod_name: string; old_file: string; new_file: string; version: string }> }>(g(game, "/local-files/auto-detect"),
       { method: "POST" }
     ),
 };
@@ -131,15 +142,15 @@ export const localFilesApi = {
  * Updates API
  */
 export const updatesApi = {
-  checkAll: () => fetchApi<UpdateInfo[]>("/api/updates/check"),
+  checkAll: (game: string) => fetchApi<UpdateInfo[]>(g(game, "/updates/check")),
 
-  checkSingle: (id: number) =>
-    fetchApi<UpdateInfo>(`/api/updates/check/${id}`),
+  checkSingle: (game: string, id: number) =>
+    fetchApi<UpdateInfo>(g(game, `/updates/check/${id}`)),
 
-  startCheckAll: () =>
-    fetchApi<CheckAllJob>("/api/updates/check-all", { method: "POST" }),
+  startCheckAll: (game: string) =>
+    fetchApi<CheckAllJob>(g(game, "/updates/check-all"), { method: "POST" }),
 
-  checkAllStatus: () => fetchApi<CheckAllJob>("/api/updates/check-all"),
+  checkAllStatus: (game: string) => fetchApi<CheckAllJob>(g(game, "/updates/check-all")),
 };
 
 
@@ -158,30 +169,40 @@ export const nexusmodsApi = {
  * Fluffy Mod Manager API
  */
 export const fluffyApi = {
-  status: () => fetchApi<FluffyStatus>("/api/fluffy/status"),
+  status: (game: string) => fetchApi<FluffyStatus>(g(game, "/fluffy/status")),
 
-  candidates: () => fetchApi<FluffyCandidates>("/api/fluffy/candidates"),
+  candidates: (game: string) => fetchApi<FluffyCandidates>(g(game, "/fluffy/candidates")),
 
-  session: () => fetchApi<FluffySession | null>("/api/fluffy/session"),
+  session: (game: string) => fetchApi<FluffySession | null>(g(game, "/fluffy/session")),
 
-  prepare: (items: Array<{ mod_db_id: number; new_archive: string }>) =>
-    fetchApi<FluffySession>("/api/fluffy/prepare", {
+  prepare: (game: string, items: Array<{ mod_db_id: number; new_archive: string }>) =>
+    fetchApi<FluffySession>(g(game, "/fluffy/prepare"), {
       method: "POST",
       body: JSON.stringify({ items }),
     }),
 
-  finalize: () =>
-    fetchApi<FluffyFinalizeResult>("/api/fluffy/finalize", { method: "POST" }),
+  finalize: (game: string) =>
+    fetchApi<FluffyFinalizeResult>(g(game, "/fluffy/finalize"), { method: "POST" }),
 
-  cancel: () =>
-    fetchApi<{ message: string }>("/api/fluffy/cancel", { method: "POST" }),
+  cancel: (game: string) =>
+    fetchApi<{ message: string }>(g(game, "/fluffy/cancel"), { method: "POST" }),
+
+  installOrder: (game: string) => fetchApi<InstallOrder>(g(game, "/fluffy/install-order")),
+
+  fixOrder: (game: string) => fetchApi<FluffySession>(g(game, "/fluffy/fix-order"), { method: "POST" }),
 };
 
 /**
- * Config API
+ * Armor API (games with an equipment view)
  */
-export const configApi = {
-  get: () => fetchApi<{ game: string }>("/api/config"),
+export const armorApi = {
+  get: (game: string) => fetchApi<ArmorOverview>(g(game, "/armor/")),
+
+  setLabel: (game: string, model: string, variety: string, label: string | null) =>
+    fetchApi<Record<string, string>>(g(game, "/armor/labels"), {
+      method: "PUT",
+      body: JSON.stringify({ model, variety, label }),
+    }),
 };
 
 /**

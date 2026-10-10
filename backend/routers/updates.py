@@ -5,10 +5,12 @@ from fastapi import APIRouter, HTTPException
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
+import contextvars
 import threading
 from models import UpdateInfo
 from database import get_all_mods, update_mod
 from nexusmods_client import get_nexusmods_client
+import games
 
 router = APIRouter()
 
@@ -184,43 +186,50 @@ def check_all_updates():
 
 
 # Background check-all: a full check takes minutes, so it runs in a thread and the
-# UI polls progress instead of holding one long request open.
+# UI polls progress instead of holding one long request open. One job per game.
 _job_lock = threading.Lock()
-_job: dict = {"running": False}
+_jobs: dict = {}
 
 
-def _run_job() -> None:
+def _job() -> dict:
+    return _jobs.setdefault(games.current().id, {"running": False})
+
+
+def _run_job(job: dict) -> None:
     def progress(checked: int, total: int, found: int) -> None:
-        _job.update(checked=checked, total=total, updates=found)
+        job.update(checked=checked, total=total, updates=found)
 
     try:
         updates = _check_all(progress)
         pending = sum(1 for m in get_all_mods() if m.get("update_available"))
-        _job.update(checked=_job.get("total", 0), updates=len(updates), pending=pending)
+        job.update(checked=job.get("total", 0), updates=len(updates), pending=pending)
     except Exception as e:
-        _job["error"] = str(e)
+        job["error"] = str(e)
     finally:
-        _job.update(running=False, finished_at=datetime.now(timezone.utc).isoformat())
+        job.update(running=False, finished_at=datetime.now(timezone.utc).isoformat())
 
 
 @router.post("/check-all")
 def start_check_all():
-    """Start a background check of all tracked mods (no-op if one is running)."""
+    """Start a background check of the game's tracked mods (no-op if one is running)."""
     with _job_lock:
-        if not _job.get("running"):
-            _job.clear()
-            _job.update(
+        job = _job()
+        if not job.get("running"):
+            job.clear()
+            job.update(
                 running=True, checked=0, total=0, updates=0, error=None,
                 started_at=datetime.now(timezone.utc).isoformat(), finished_at=None,
             )
-            threading.Thread(target=_run_job, daemon=True).start()
-    return dict(_job)
+            # The thread keeps this request's current game
+            ctx = contextvars.copy_context()
+            threading.Thread(target=ctx.run, args=(_run_job, job), daemon=True).start()
+    return dict(job)
 
 
 @router.get("/check-all")
 def check_all_status():
     """Progress of the background check-all (running=False with no started_at if none ran)."""
-    return dict(_job)
+    return dict(_job())
 
 
 @router.get("/check/{mod_db_id}", response_model=UpdateInfo)

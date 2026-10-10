@@ -2,29 +2,23 @@
 SQLite database setup and operations
 """
 import sqlite3
-import os
 from datetime import datetime
 from typing import List, Optional
 from contextlib import contextmanager
-from dotenv import load_dotenv
+import games
 
-load_dotenv()
-
-# Store database at same level as Mods folder
-MODS_DIR = os.getenv("MODS_DIR", "")
-if MODS_DIR:
-    # Get parent directory of Mods folder
-    DB_PATH = os.path.join(os.path.dirname(MODS_DIR), "nexusmods_tracker.db")
-else:
-    # Fallback to current directory if MODS_DIR not set
-    DB_PATH = "tracker.db"
+_initialized: set = set()
 
 @contextmanager
 def get_db():
-    """Get database connection context manager"""
-    conn = sqlite3.connect(DB_PATH)
+    """Connection to the current game's database (created on first use)"""
+    path = games.current().db_path
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     try:
+        if path not in _initialized:
+            _init_schema(conn)
+            _initialized.add(path)
         yield conn
     finally:
         conn.close()
@@ -98,45 +92,43 @@ def _migrate_schema(conn):
     if 'uq_mod_file' not in existing_indexes:
         conn.execute("CREATE UNIQUE INDEX uq_mod_file ON mods (mod_id, file_id)")
 
-def init_db():
-    """Initialize database tables"""
-    with get_db() as conn:
-        # Check if table already exists
-        existing = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='mods'"
-        ).fetchone()
+def _init_schema(conn):
+    """Create or migrate the mods table"""
+    existing = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='mods'"
+    ).fetchone()
 
-        if existing:
-            _migrate_schema(conn)
-        else:
-            conn.execute("""
-                CREATE TABLE mods (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    local_file TEXT NOT NULL UNIQUE,
-                    mod_id INTEGER NOT NULL,
-                    file_id INTEGER NOT NULL,
-                    game TEXT NOT NULL,
-                    name TEXT,
-                    file_name TEXT,
-                    description TEXT,
-                    size_in_bytes INTEGER,
-                    latest_file_id INTEGER,
-                    latest_version TEXT,
-                    latest_file_name TEXT,
-                    local_file_mtime TIMESTAMP,
-                    version TEXT,
-                    mod_name TEXT,
-                    author TEXT,
-                    category_name TEXT,
-                    uploaded_time TEXT,
-                    last_checked TIMESTAMP,
-                    update_available BOOLEAN DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(mod_id, file_id)
-                )
-            """)
-        conn.commit()
+    if existing:
+        _migrate_schema(conn)
+    else:
+        conn.execute("""
+            CREATE TABLE mods (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                local_file TEXT NOT NULL UNIQUE,
+                mod_id INTEGER NOT NULL,
+                file_id INTEGER NOT NULL,
+                game TEXT NOT NULL,
+                name TEXT,
+                file_name TEXT,
+                description TEXT,
+                size_in_bytes INTEGER,
+                latest_file_id INTEGER,
+                latest_version TEXT,
+                latest_file_name TEXT,
+                local_file_mtime TIMESTAMP,
+                version TEXT,
+                mod_name TEXT,
+                author TEXT,
+                category_name TEXT,
+                uploaded_time TEXT,
+                last_checked TIMESTAMP,
+                update_available BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(mod_id, file_id)
+            )
+        """)
+    conn.commit()
 
 def get_all_mods() -> List[dict]:
     """Get all tracked mods"""

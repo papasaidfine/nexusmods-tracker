@@ -1,9 +1,9 @@
 "use client";
 
-import { Fragment, useState, useEffect } from "react";
+import { Fragment, useState } from "react";
 import { toast } from "sonner";
-import { modsApi, nexusmodsApi, configApi } from "@/lib/api";
-import { openUrlsInNewTabs } from "@/lib/utils";
+import { modsApi, nexusmodsApi } from "@/lib/api";
+import { getNexusmodsDownloadUrl, openDownloadPages } from "@/lib/nexus-downloads";
 import type { NexusmodsMod, NexusmodsFile } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,7 +25,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusIcon, Loader2Icon, SearchIcon, DownloadIcon, CheckCircleIcon } from "lucide-react";
+import { PlusIcon, Loader2Icon, SearchIcon, DownloadIcon } from "lucide-react";
+import { useGame } from "@/hooks/use-game";
 
 interface AddModDialogProps {
   onModAdded: () => void;
@@ -47,17 +48,13 @@ type RegResult = { file: ModFile; success: boolean; error?: string };
 export function AddModDialog({ onModAdded }: AddModDialogProps) {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<Step>(1);
-  const [game, setGame] = useState("");
+  const game = useGame();
   const [modIdInput, setModIdInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [lookedUp, setLookedUp] = useState<LookedUpMod[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [registering, setRegistering] = useState(false);
   const [results, setResults] = useState<RegResult[]>([]);
-
-  useEffect(() => {
-    configApi.get().then((cfg) => setGame(cfg.game)).catch(() => {});
-  }, []);
 
   const handleOpenChange = (isOpen: boolean) => {
     setOpen(isOpen);
@@ -180,26 +177,19 @@ export function AddModDialog({ onModAdded }: AddModDialogProps) {
       toast.error("Please select at least one file");
       return;
     }
-    const urls = selected.map(
-      (file) => `https://www.nexusmods.com/${game}/mods/${file.mod_id}?tab=files&file_id=${file.file_id}`
-    );
-    const blocked = openUrlsInNewTabs(urls);
-    if (blocked.length > 0) {
-      toast.warning(
-        `Browser blocked ${blocked.length} of ${urls.length} download pages. ` +
-          "Allow pop-ups for this site (icon in the address bar) and try again."
-      );
-    }
+    const urls = selected.map((file) => getNexusmodsDownloadUrl(game, file.mod_id, file.file_id));
+    if (!openDownloadPages(urls)) return;
+    // Registering only needs Nexus metadata, so don't wait for the downloads
     setStep(3);
+    register(selected);
   };
 
-  const handleRegister = async () => {
-    const selected = allFiles().filter((f) => selectedKeys.has(fileKey(f.mod_id, f.file_id)));
+  const register = async (selected: ModFile[]) => {
     setRegistering(true);
     const newResults: RegResult[] = [];
     for (const file of selected) {
       try {
-        await modsApi.create({
+        await modsApi.create(game, {
           mod_id: file.mod_id,
           file_id: file.file_id,
           game,
@@ -250,7 +240,7 @@ export function AddModDialog({ onModAdded }: AddModDialogProps) {
           <DialogDescription>
             {step === 1 && "Enter one or more Nexusmods mod IDs (comma or space separated)."}
             {step === 2 && "Select files to download and register."}
-            {step === 3 && "Registering selected files..."}
+            {step === 3 && "Download pages are opening; registering the selected files."}
           </DialogDescription>
         </DialogHeader>
 
@@ -373,24 +363,14 @@ export function AddModDialog({ onModAdded }: AddModDialogProps) {
           </div>
         )}
 
-        {/* Step 3: Register */}
+        {/* Step 3: Registration results */}
         {step === 3 && (
           <div className="grid gap-4">
-            {results.length === 0 ? (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  Download the files in your browser, then click below to register them.
-                </p>
-                <div className="flex justify-between">
-                  <Button variant="outline" onClick={() => setStep(2)}>
-                    Back
-                  </Button>
-                  <Button onClick={handleRegister} disabled={registering}>
-                    {registering ? <Loader2Icon className="animate-spin" /> : <CheckCircleIcon />}
-                    {registering ? "Registering..." : "Done & Register"}
-                  </Button>
-                </div>
-              </>
+            {registering ? (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2Icon className="size-4 animate-spin" />
+                Registering...
+              </p>
             ) : (
               <div className="grid gap-2">
                 {results.map((r) => (

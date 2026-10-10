@@ -4,13 +4,18 @@ Fluffy router - carry installed mod options over to a new mod version in Fluffy 
 Flow: prepare (scan new archives, write an uninstall and an install preset, restart
 Fluffy) -> user clicks the two presets in Fluffy -> session reports progress from
 installed.ini -> finalize (promote updates in the DB, delete old archives).
+
+Reinstalled options go to the end of the install order, so options that were on
+top of them are reinstalled after them, keeping the user's order (see install_order).
+On request, the same flow fixes the install order of addons installed before the part
+they change.
 """
 import collections
 import json
 import os
-import re
 import shutil
 import threading
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -18,8 +23,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import fluffy
+import games
+import install_order
 from database import get_all_mods, get_mod_by_id
-from paths import mod_file_path
+from paths import downloaded_path, mod_file_path
 from routers.mods import apply_update
 
 router = APIRouter()
@@ -40,10 +47,7 @@ class PrepareRequest(BaseModel):
 
 
 def _mods_dir() -> str:
-    mods_dir = os.getenv("MODS_DIR", "")
-    if not mods_dir:
-        raise HTTPException(status_code=500, detail="MODS_DIR not configured")
-    return mods_dir
+    return games.current().mods_dir
 
 
 def _session_path() -> str:
@@ -113,7 +117,8 @@ def _fluffy_call(fn, *args, **kwargs):
 
 def _with_status(session: dict) -> dict:
     """Annotate a session with live progress read from installed.ini."""
-    installed_ids = {str(o.mod_id) for o in _fluffy_call(fluffy.read_installed)}
+    installed = _fluffy_call(fluffy.read_installed)
+    installed_ids = {str(o.mod_id) for o in installed}
     all_done = True
     seen_changed = False
     for mod in session["mods"]:
@@ -136,37 +141,143 @@ def _with_status(session: dict) -> dict:
             and not any(r["old_installed"] for r in mod["removed"])
         )
         all_done = all_done and mod["done"]
+    if session.get("reorder"):
+        seen_changed |= _reorder_status(
+            session["reorder"], installed, bool(session.get("reorder_fixes_order")))
+        all_done = all_done and all(r["done"] for r in session["reorder"])
     session["done"] = all_done
     if seen_changed:
         _save_session(session)
     return session
 
 
-def _downloaded_path(name: str) -> Optional[str]:
-    """Path of an archive in DOWNLOADS_DIR (the browser's download folder), if it is there.
-    Browsers save a name clash as "name (1).zip", so the newest such copy also counts."""
-    downloads_dir = os.getenv("DOWNLOADS_DIR", "")
-    if not downloads_dir:
-        return None
+def _reorder_status(reorder: List[dict], installed: list, fixes_order: bool) -> bool:
+    """Mark reinstalled options. They keep their IDs, so removal is only seen by
+    polling (uninstall_seen). When fixing the install order, an option is done once
+    installed again and either seen removed or in place (nothing that belongs under
+    it installed later); when reinstalled to keep the order, once installed.
+    Returns whether uninstall_seen changed."""
+    by_id, last = {}, {}
+    if fixes_order:
+        options = _order_options(installed, fluffy.known_options(
+            installed, _fluffy_call(fluffy.read_cache_with_retry)))
+        by_id = {o.mod_id: o for o in options}
+        last = install_order.last_writers(options)
+    installed_ids = {str(o.mod_id) for o in installed}
+    changed = False
+    for r in reorder:
+        present = r["option"]["mod_id"] in installed_ids
+        if not present and not r.get("uninstall_seen"):
+            r["uninstall_seen"] = changed = True
+        r["installed"] = present
+        if fixes_order:
+            o = by_id.get(r["option"]["mod_id"])
+            r["in_place"] = o is not None and not install_order.misordered_files(o, last)
+            r["done"] = present and (r["in_place"] or bool(r.get("uninstall_seen")))
+        else:
+            r["in_place"] = r["done"] = present
+    return changed
+
+
+def _families() -> dict:
+    """Archive -> Nexus mod ID of tracked mods, so a mod's archives (AIO, nsfw
+    pack, ...) are ordered as one mod."""
+    return {m["local_file"]: str(m["mod_id"]) for m in get_all_mods()}
+
+
+def _order_options(installed: list, cache: list) -> List[install_order.Option]:
+    return install_order.load_options(installed, cache, _families())
+
+
+# Checking means hashing game files; reuse the result until installed.ini changes
+_issues_cache: dict = {}
+
+
+def _install_order_issues(installed: list, cache: list):
+    """(options, issues, whether game files could be compared) for the current installed.ini."""
+    path = fluffy.installed_ini_path()
+    st = os.stat(path)
+    key = (path, st.st_mtime_ns, st.st_size)
+    if _issues_cache.get("key") != key:
+        options = _order_options(installed, cache)
+        game_dir = install_order.game_install_dir(os.path.basename(fluffy.game_dir()))
+        checker = install_order.ContentChecker(game_dir, _mods_dir())
+        issues = install_order.find_issues(options, checker.has_copy)
+        _issues_cache.update(key=key, value=(options, issues, game_dir is not None))
+    return _issues_cache["value"]
+
+
+def _option_json(o: install_order.Option) -> dict:
+    return {"section": o.section, "archive": o.archive, "position": o.index}
+
+
+@router.get("/install-order")
+def get_install_order():
+    """Installed options that lost files to options installed after them."""
+    installed = _fluffy_call(fluffy.read_installed)
+    cache = fluffy.known_options(installed, _fluffy_call(fluffy.read_cache_with_retry))
+    _, issues, game_dir_found = _install_order_issues(installed, cache)
+    tracked = {m["local_file"]: m["id"] for m in get_all_mods()}
+    return {
+        "game_dir_found": game_dir_found,
+        "issues": [{
+            "kind": i["kind"],
+            "option": _option_json(i["option"]),
+            "mod_db_id": tracked.get(i["option"].archive),
+            "files": i["files"],
+            "overridden_by": [_option_json(w) for w in i["overridden_by"]],
+            "verified": i["verified"],
+        } for i in issues],
+    }
+
+
+@router.post("/fix-order")
+def fix_install_order():
+    """Reinstall misordered options on top of what they overlay: write an uninstall
+    and an install preset and restart Fluffy, like an update."""
+    if not _lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Another Fluffy operation is in progress")
     try:
-        path = mod_file_path(downloads_dir, name)
-    except ValueError:
-        return None
-    if os.path.exists(path):
-        return path
-    stem, ext = os.path.splitext(name)
-    renamed = re.compile(rf"{re.escape(stem)} \(\d+\){re.escape(ext)}")
-    copies = [
-        os.path.join(downloads_dir, f) for f in os.listdir(downloads_dir) if renamed.fullmatch(f)
-    ]
-    return max(copies, key=os.path.getmtime) if copies else None
+        if _load_session():
+            raise HTTPException(status_code=409, detail="An update session is already open")
+        installed = _fluffy_call(fluffy.read_installed)
+        cache = fluffy.known_options(installed, _fluffy_call(fluffy.read_cache_with_retry))
+        options, issues, _ = _install_order_issues(installed, cache)
+        moving = [i["option"] for i in issues if i["kind"] == "misordered"]
+        if not moving:
+            raise HTTPException(status_code=400, detail="No install order problems to fix")
+        moving_ids = {id(o) for o in moving}
+        ordered = install_order.reinstall_order(
+            moving, [o for o in options if id(o) not in moving_ids], install_order.must_follow)
+        session = {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "held_archives": [],
+            "mods": [],
+            "reorder": [_reorder_item(o) for o in ordered],
+            "reorder_fixes_order": True,
+        }
+        try:
+            return _write_presets_and_restart(
+                session,
+                uninstall=[o.entry() for o in sorted(ordered, key=lambda o: o.index)],
+                install=[o.entry() for o in ordered],
+            )
+        except Exception:
+            _clear_session()
+            raise
+    finally:
+        _lock.release()
+
+
+def _reorder_item(o: install_order.Option) -> dict:
+    return {"folder": o.folder or o.section, "archive": o.archive, "option": o.entry()}
 
 
 def _downloaded_archive(mod: dict, mods_dir: str) -> Optional[str]:
     """The downloaded update: Nexusmods' file_name in the Mods or Downloads folder.
     Browsers keep that name, and a mod's files differ only by it, so no fuzzy matching."""
     latest = mod.get("latest_file_name")
-    if latest and (os.path.exists(os.path.join(mods_dir, latest)) or _downloaded_path(latest)):
+    if latest and (os.path.exists(os.path.join(mods_dir, latest)) or downloaded_path(latest)):
         return latest
     return None
 
@@ -192,8 +303,13 @@ def list_candidates():
     """Mods with a pending update, with their downloaded archive and installed option count."""
     mods_dir = _mods_dir()
     mods = get_all_mods()
-    installed = _fluffy_call(fluffy.read_installed)
-    cache = fluffy.known_options(installed, _fluffy_call(fluffy.read_cache_with_retry))
+    try:
+        installed = fluffy.read_installed()
+        cache = fluffy.known_options(installed, fluffy.read_cache_with_retry())
+        fluffy_error = None
+    except (fluffy.FluffyError, OSError) as e:
+        # Still list pending updates, just without Fluffy's side
+        installed, cache, fluffy_error = [], [], str(e)
     candidates = []
     for mod in mods:
         if not (mod.get("update_available") and mod.get("latest_file_id")):
@@ -216,7 +332,7 @@ def list_candidates():
     archive_of = {c.mod_id: c.archive for c in cache}
     per_archive = collections.Counter(archive_of.get(o.mod_id) for o in installed)
     installed_counts = {m["id"]: per_archive[m["local_file"]] for m in mods if per_archive[m["local_file"]]}
-    return {"candidates": candidates, "installed_counts": installed_counts}
+    return {"candidates": candidates, "installed_counts": installed_counts, "fluffy_error": fluffy_error}
 
 
 @router.get("/session")
@@ -249,7 +365,7 @@ def prepare_update(req: PrepareRequest):
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
             if not os.path.exists(path):
-                downloaded = _downloaded_path(item.new_archive)
+                downloaded = downloaded_path(item.new_archive)
                 if not downloaded:
                     raise HTTPException(status_code=400, detail=f"{item.new_archive} is not in the Mods or Downloads folder")
                 shutil.move(downloaded, path)
@@ -301,28 +417,44 @@ def _plan_and_write_presets(entries: list, installed: list, cache: list, held: L
             "added": plan["added"],
         })
 
-    # Presets keep the global install order from installed.ini
-    order = {str(o.mod_id): i for i, o in enumerate(installed)}
+    # New options take their old option's place in the install order (and its files,
+    # close enough for ordering). Reinstalling appends them, so options the user
+    # installed on top of the old ones are reinstalled too, keeping the user's order.
+    options = _order_options(installed, cache)
+    by_id = {o.mod_id: o for o in options}
+    moving = [
+        replace(by_id[m["old"]["mod_id"]], **m["new"])
+        for s in session_mods for m in s["matched"]
+    ]
+    replaced = {m["old"]["mod_id"] for s in session_mods for m in s["matched"]} | \
+               {r["old"]["mod_id"] for s in session_mods for r in s["removed"]}
+    ordered = install_order.reinstall_order(moving, [o for o in options if o.mod_id not in replaced])
+    moving_ids = {id(o) for o in moving}
+    extra = [o for o in ordered if id(o) not in moving_ids]
+
     uninstall = [m["old"] for s in session_mods for m in s["matched"]] + \
-                [r["old"] for s in session_mods for r in s["removed"]]
+                [r["old"] for s in session_mods for r in s["removed"]] + \
+                [o.entry() for o in extra]
+    order = {o.mod_id: o.index for o in options}
     uninstall.sort(key=lambda e: order[e["mod_id"]])
-    install = sorted(
-        (m for s in session_mods for m in s["matched"]),
-        key=lambda m: order[m["old"]["mod_id"]],
-    )
 
     session = {
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "uninstall_preset": UNINSTALL_PRESET if uninstall else None,
-        "install_preset": INSTALL_PRESET if install else None,
         "held_archives": held,
         "mods": session_mods,
+        "reorder": [_reorder_item(o) for o in extra],
     }
+    return _write_presets_and_restart(session, uninstall, [o.entry() for o in ordered])
+
+
+def _write_presets_and_restart(session: dict, uninstall: List[dict], install: List[dict]) -> dict:
+    session["uninstall_preset"] = UNINSTALL_PRESET if uninstall else None
+    session["install_preset"] = INSTALL_PRESET if install else None
     fluffy.delete_tracker_presets()
     if uninstall:
         fluffy.write_preset(UNINSTALL_PRESET, uninstall)
     if install:
-        fluffy.write_preset(INSTALL_PRESET, [m["new"] for m in install])
+        fluffy.write_preset(INSTALL_PRESET, install)
     _save_session(session)
 
     # Fluffy reads presets only at startup. The presets are written either way,

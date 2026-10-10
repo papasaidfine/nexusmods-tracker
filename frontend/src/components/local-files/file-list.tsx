@@ -30,6 +30,7 @@ import {
   SearchIcon,
   Trash2Icon,
 } from "lucide-react";
+import { useGame } from "@/hooks/use-game";
 
 interface FileListProps {
   files: LocalFile[];
@@ -46,6 +47,7 @@ export function FileList({ files, mods, onMutate }: FileListProps) {
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [filter, setFilter] = useState<FilterMode>("all");
   const [mapTarget, setMapTarget] = useState<string | null>(null);
+  const game = useGame();
   const [search, setSearch] = useState("");
 
   const handleSort = (field: SortField) => {
@@ -219,7 +221,7 @@ export function FileList({ files, mods, onMutate }: FileListProps) {
                 <TableCell>
                   {linkedMod ? (
                     <Link
-                      href={`/mods/${linkedMod.id}`}
+                      href={`/${game}/mods/${linkedMod.id}`}
                       className="text-sm hover:underline text-foreground"
                     >
                       {linkedMod.mod_name || `Mod ${linkedMod.mod_id}`}
@@ -232,7 +234,7 @@ export function FileList({ files, mods, onMutate }: FileListProps) {
                   <div className="flex items-center justify-end gap-1">
                     {file.mapped && linkedMod ? (
                       <Button variant="ghost" size="xs" asChild>
-                        <Link href={`/mods/${linkedMod.id}`}>
+                        <Link href={`/${game}/mods/${linkedMod.id}`}>
                           <EyeIcon />
                           View Mod
                         </Link>
@@ -252,7 +254,7 @@ export function FileList({ files, mods, onMutate }: FileListProps) {
                       size="icon-xs"
                       onClick={async () => {
                         try {
-                          await localFilesApi.delete(file.filename);
+                          await localFilesApi.delete(game, file.filename);
                           toast.success(`Deleted ${file.filename}`);
                           onMutate();
                         } catch (error) {

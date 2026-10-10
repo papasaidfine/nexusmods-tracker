@@ -17,3 +17,6 @@ __pycache__/
 .vscode/
 *.swp
 *.swo
+
+# Local game folders (see games.example.json)
+games.json

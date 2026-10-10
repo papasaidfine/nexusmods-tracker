@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { localFilesApi } from "@/lib/api";
 import { useCheckAllUpdates } from "@/hooks/use-updates";
 import { cn } from "@/lib/utils";
+import { useGame } from "@/hooks/use-game";
 
 interface QuickActionsProps {
   onScanComplete?: () => void;
@@ -22,13 +23,14 @@ interface QuickActionsProps {
 
 export function QuickActions({ onScanComplete }: QuickActionsProps) {
   const router = useRouter();
+  const game = useGame();
   const { running: checkingUpdates, start: handleCheckUpdates } = useCheckAllUpdates();
   const [scanning, setScanning] = useState(false);
 
   async function handleScanFiles() {
     setScanning(true);
     try {
-      const result = await localFilesApi.scan();
+      const result = await localFilesApi.scan(game);
       toast.success(
         `Scan complete: ${result.total_files} files found (${result.unmapped_files} unmapped)`
       );
@@ -89,7 +91,7 @@ export function QuickActions({ onScanComplete }: QuickActionsProps) {
           <Button
             variant="outline"
             className="h-auto justify-start gap-3 px-4 py-3"
-            onClick={() => router.push("/mods")}
+            onClick={() => router.push(`/${game}/mods`)}
           >
             <Package className="size-4 shrink-0" />
             <div className="text-left">
@@ -103,7 +105,7 @@ export function QuickActions({ onScanComplete }: QuickActionsProps) {
           <Button
             variant="outline"
             className="h-auto justify-start gap-3 px-4 py-3"
-            onClick={() => router.push("/local-files")}
+            onClick={() => router.push(`/${game}/local-files`)}
           >
             <FolderOpen className="size-4 shrink-0" />
             <div className="text-left">

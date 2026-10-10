@@ -5,7 +5,8 @@ import Link from "next/link";
 import { formatDistanceToNow, format } from "date-fns";
 import { toast } from "sonner";
 import { modsApi, updatesApi } from "@/lib/api";
-import { cn, openUrlsInBatches, parseServerDate } from "@/lib/utils";
+import { cn, parseServerDate } from "@/lib/utils";
+import { getNexusmodsDownloadUrl, openDownloadPages } from "@/lib/nexus-downloads";
 import type { FluffyCandidate, Mod } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,7 @@ import {
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
   CircleCheckIcon,
+  ClockIcon,
   DownloadIcon,
   EyeIcon,
   RefreshCwIcon,
@@ -54,6 +56,7 @@ import {
   Trash2Icon,
   UserIcon,
 } from "lucide-react";
+import { useGame } from "@/hooks/use-game";
 
 interface ModTableProps {
   mods: Mod[];
@@ -103,14 +106,6 @@ interface AuthorGroup {
 
 const UNKNOWN_AUTHOR = "Unknown author";
 
-/** Be gentle with Nexusmods: 5 pages 2s apart, then a 10s pause */
-const DOWNLOAD_SCHEDULE = { batchSize: 5, intervalMs: 2000, batchPauseMs: 10000 };
-
-/** File page on Nexusmods; nmt=1 lets the tracker's userscript click "Slow download" */
-function getNexusmodsDownloadUrl(game: string, modId: number, fileId: number) {
-  return `https://www.nexusmods.com/${game}/mods/${modId}?tab=files&file_id=${fileId}&nmt=1`;
-}
-
 function formatRelativeDate(dateStr: string | null) {
   if (!dateStr) return "—";
   try {
@@ -155,6 +150,7 @@ export function ModTable({
     (v === "updates" && m.update_available) ||
     (v === "downloaded" && isDownloaded(m));
 
+  const game = useGame();
   const [sortField, setSortField] = useState<SortField>("mod_name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   // Mod groups whose expansion differs from the default (same rule as authors)
@@ -296,41 +292,12 @@ export function ModTable({
       return;
     }
     const urls = updatable.map((mod) => getNexusmodsDownloadUrl(mod.game, mod.mod_id, mod.latest_file_id!));
-    const popupHint = "Allow pop-ups for this site (icon in the address bar) and try again.";
-    const total = new Set(urls).size;
-    const toastId = `download-${Date.now()}`;
-    let warned = false;
-    const progress = (count: number) =>
-      count >= total
-        ? toast.success(`Opened ${total} download page${total > 1 ? "s" : ""}`, {
-            id: toastId,
-            action: undefined,
-          })
-        : toast.loading(`Opening download pages ${count}/${total} (5 at a time)`, {
-            id: toastId,
-            action: { label: "Stop", onClick: () => stopAll() },
-          });
-    const stop = openUrlsInBatches(urls, DOWNLOAD_SCHEDULE, {
-      onOpened: progress,
-      onBlocked: () => {
-        if (warned) return;
-        warned = true;
-        toast.warning(`Browser blocked some download pages. ${popupHint}`);
-      },
-    });
-    if (!stop) {
-      toast.warning(`Browser blocked the download page. ${popupHint}`);
-      return;
-    }
-    const stopAll = () => {
-      stop();
-      toast.info("Stopped opening download pages", { id: toastId });
-    };
+    openDownloadPages(urls);
   };
 
   const handleCheckFile = async (mod: Mod) => {
     try {
-      const result = await updatesApi.checkSingle(mod.id);
+      const result = await updatesApi.checkSingle(game, mod.id);
       if (result.update_available) {
         toast.success(`Update available for ${mod.name || mod.local_file}`);
       } else {
@@ -347,7 +314,7 @@ export function ModTable({
     let updates = 0;
     for (const mod of group.files) {
       try {
-        const result = await updatesApi.checkSingle(mod.id);
+        const result = await updatesApi.checkSingle(game, mod.id);
         if (result.update_available) updates++;
       } catch {
         // no update
@@ -365,7 +332,7 @@ export function ModTable({
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      await modsApi.delete(deleteTarget.id);
+      await modsApi.delete(game, deleteTarget.id);
       toast.success(`Deleted ${deleteTarget.mod_name || `Mod ${deleteTarget.mod_id}`}`);
       setDeleteTarget(null);
       onMutate();
@@ -642,17 +609,22 @@ export function ModTable({
                         <TableCell className="max-w-[520px] pl-12">
                           <div className="flex items-center gap-1.5">
                             <Link
-                              href={`/mods/${mod.id}`}
+                              href={`/${game}/mods/${mod.id}`}
                               className="hover:underline text-foreground font-medium block truncate"
                               title={mod.local_file}
                             >
                               {mod.name || mod.local_file}
                             </Link>
-                            {mod.file_exists === false && (
-                              <span className="text-destructive shrink-0" title="Local file missing from disk">
-                                <AlertTriangleIcon className="size-3.5" />
-                              </span>
-                            )}
+                            {mod.file_exists === false &&
+                              (mod.local_file_mtime ? (
+                                <span className="text-destructive shrink-0" title="Local file missing from disk">
+                                  <AlertTriangleIcon className="size-3.5" />
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground shrink-0" title="Waiting for the download to finish">
+                                  <ClockIcon className="size-3.5" />
+                                </span>
+                              ))}
                           </div>
                         </TableCell>
                         <TableCell className="whitespace-nowrap">
@@ -724,7 +696,7 @@ export function ModTable({
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem asChild>
-                                <Link href={`/mods/${mod.id}`}>
+                                <Link href={`/${game}/mods/${mod.id}`}>
                                   <EyeIcon />
                                   View Details
                                 </Link>

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { fluffyApi } from "@/lib/api";
-import type { FluffySession, FluffySessionMod } from "@/lib/types";
+import type { FluffyReorderItem, FluffySession, FluffySessionMod } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -28,6 +28,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
+import { useGame } from "@/hooks/use-game";
 
 interface SessionViewProps {
   session: FluffySession;
@@ -113,14 +114,61 @@ function ModPlan({ mod }: { mod: FluffySessionMod }) {
   );
 }
 
+function ReorderPlan({ items, update }: { items: FluffyReorderItem[]; update: boolean }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <StepIcon done={items.every((r) => r.done)} />
+          Install order
+        </CardTitle>
+        <CardDescription>
+          {update
+            ? "Reinstalled after the updated options, so they stay on top of them."
+            : "Reinstalled in this order, so each goes on top of the part it changes."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Option</TableHead>
+              <TableHead className="w-28">Reinstalled</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((r) => (
+              <TableRow key={r.option.mod_id}>
+                <TableCell className="text-sm">
+                  <div>{r.folder}</div>
+                  <div className="max-w-md truncate text-xs text-muted-foreground" title={r.archive ?? ""}>
+                    {r.archive}
+                  </div>
+                </TableCell>
+                <TableCell><StepIcon done={r.done} /></TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function SessionView({ session, onChange }: SessionViewProps) {
+  const game = useGame();
   const [cancelling, setCancelling] = useState(false);
   const finalizing = useRef(false);
+  const reorder = session.reorder ?? [];
+  const isUpdate = session.mods.length > 0;
 
   const allOptions = session.mods.flatMap((m) => [
     ...m.matched.map((o) => ({ oldGone: !o.old_installed, newIn: o.new_installed })),
     ...m.removed.map((o) => ({ oldGone: !o.old_installed, newIn: true })),
-  ]);
+  ]).concat(
+    // Reinstalled options keep their IDs; removal is only seen if polled in between
+    reorder.map((r) => ({ oldGone: !!r.uninstall_seen || r.done, newIn: r.done }))
+  );
   const uninstallDone = allOptions.every((o) => o.oldGone);
   const installDone = allOptions.every((o) => o.newIn);
 
@@ -129,9 +177,13 @@ export function SessionView({ session, onChange }: SessionViewProps) {
     if (!session.done || finalizing.current) return;
     finalizing.current = true;
     fluffyApi
-      .finalize()
+      .finalize(game)
       .then((result) => {
-        toast.success(`Updated ${result.updated.length} mod${result.updated.length === 1 ? "" : "s"}`);
+        toast.success(
+          isUpdate
+            ? `Updated ${result.updated.length} mod${result.updated.length === 1 ? "" : "s"}`
+            : "Install order fixed"
+        );
         for (const e of result.errors) toast.error(`Mod ${e.mod_db_id}: ${e.error}`);
         if (result.leftover_old_archives.length > 0) {
           toast.warning(
@@ -145,13 +197,13 @@ export function SessionView({ session, onChange }: SessionViewProps) {
         toast.error(e instanceof Error ? e.message : "Failed to finalize update");
       })
       .finally(onChange);
-  }, [session.done, onChange]);
+  }, [session.done, onChange, isUpdate, game]);
 
   const handleCancel = async () => {
     setCancelling(true);
     try {
-      await fluffyApi.cancel();
-      toast.info("Update cancelled; restart Fluffy to clear the presets from its list");
+      await fluffyApi.cancel(game);
+      toast.info("Cancelled; restart Fluffy to clear the presets from its list");
       onChange();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to cancel");
@@ -168,7 +220,7 @@ export function SessionView({ session, onChange }: SessionViewProps) {
             <span>Apply in Fluffy</span>
             <Button variant="outline" size="sm" onClick={handleCancel} disabled={cancelling}>
               <XIcon />
-              Cancel update
+              {isUpdate ? "Cancel update" : "Cancel"}
             </Button>
           </CardTitle>
           <CardDescription>
@@ -180,14 +232,14 @@ export function SessionView({ session, onChange }: SessionViewProps) {
             <div className="flex items-center gap-2">
               <StepIcon done={uninstallDone} />
               1. Click <code className="rounded bg-muted px-1.5 py-0.5">{session.uninstall_preset}</code>{" "}
-              to uninstall the old options
+              {isUpdate ? "to uninstall the old options" : "to uninstall the options to reorder"}
             </div>
           )}
           {session.install_preset && (
             <div className="flex items-center gap-2">
               <StepIcon done={installDone} />
               2. Click <code className="rounded bg-muted px-1.5 py-0.5">{session.install_preset}</code>{" "}
-              to install the same options from the new version
+              {isUpdate ? "to install the same options from the new version" : "to reinstall them in order"}
             </div>
           )}
           {session.done && (
@@ -201,6 +253,7 @@ export function SessionView({ session, onChange }: SessionViewProps) {
       {session.mods.map((mod) => (
         <ModPlan key={mod.mod_db_id} mod={mod} />
       ))}
+      {reorder.length > 0 && <ReorderPlan items={reorder} update={isUpdate} />}
     </div>
   );
 }

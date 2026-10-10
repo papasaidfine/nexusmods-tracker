@@ -1,30 +1,21 @@
 """
 Nexusmods Tracker - FastAPI Backend
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from contextlib import asynccontextmanager
 import os
 import uvicorn
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from database import init_db
-from routers import mods, local_files, updates, nexusmods_api, fluffy
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    init_db()
-    yield
-    # Shutdown (cleanup if needed)
+import games
+from routers import mods, local_files, updates, nexusmods_api, fluffy, armor
 
 app = FastAPI(
     title="Nexusmods Tracker API",
     version="1.0.0",
-    lifespan=lifespan
 )
 
 # CORS for Next.js frontend
@@ -36,12 +27,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(mods.router, prefix="/api/mods", tags=["mods"])
-app.include_router(local_files.router, prefix="/api/local-files", tags=["local-files"])
-app.include_router(updates.router, prefix="/api/updates", tags=["updates"])
+# Per-game routers run with {game} as the current game (see games.py)
+GAME_PREFIX = "/api/games/{game}"
+for router, name in [
+    (mods.router, "mods"),
+    (local_files.router, "local-files"),
+    (updates.router, "updates"),
+    (fluffy.router, "fluffy"),
+    (armor.router, "armor"),
+]:
+    app.include_router(router, prefix=f"{GAME_PREFIX}/{name}", tags=[name],
+                       dependencies=[Depends(games.use_game)])
 app.include_router(nexusmods_api.router, prefix="/api/nexusmods", tags=["nexusmods"])
-app.include_router(fluffy.router, prefix="/api/fluffy", tags=["fluffy"])
 
 @app.get("/")
 def root():
@@ -60,9 +57,9 @@ def userscript():
         media_type="text/javascript",
     )
 
-@app.get("/api/config")
-def get_config():
-    return {"game": os.getenv("GAME", "monsterhunterwilds")}
+@app.get("/api/games")
+def list_games():
+    return [g.to_json() for g in games.all_games()]
 
 @app.get("/health")
 def health():

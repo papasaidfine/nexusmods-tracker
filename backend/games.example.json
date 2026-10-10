@@ -1,0 +1,12 @@
+[
+  {
+    "id": "monsterhunterwilds",
+    "name": "Monster Hunter Wilds",
+    "fluffy_game_dir": "/mnt/c/path/to/fluffy/Games/MonsterHunterWilds"
+  },
+  {
+    "id": "monsterhunterworld",
+    "name": "Monster Hunter: World",
+    "fluffy_game_dir": "/mnt/c/path/to/another/fluffy/Games/MHW"
+  }
+]

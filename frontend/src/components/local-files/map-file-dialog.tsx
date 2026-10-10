@@ -16,6 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2Icon, LinkIcon } from "lucide-react";
+import { useGame } from "@/hooks/use-game";
 
 interface MapFileDialogProps {
   filename: string | null;
@@ -30,11 +31,12 @@ export function MapFileDialog({
   onOpenChange,
   onMapped,
 }: MapFileDialogProps) {
+  // The file is in this game's Mods folder, so it is a mod for this game
+  const game = useGame();
   const [submitting, setSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     mod_id: 0,
     file_id: 0,
-    game: "monsterhunterwilds",
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -51,12 +53,12 @@ export function MapFileDialog({
         local_file: filename,
         mod_id: formData.mod_id,
         file_id: formData.file_id,
-        game: formData.game,
+        game,
       };
-      await modsApi.create(payload);
+      await modsApi.create(game, payload);
       toast.success(`Mapped "${filename}" successfully`);
       onOpenChange(false);
-      setFormData({ mod_id: 0, file_id: 0, game: "monsterhunterwilds" });
+      setFormData({ mod_id: 0, file_id: 0 });
       onMapped();
     } catch (error) {
       toast.error(
@@ -124,20 +126,6 @@ export function MapFileDialog({
             />
             <p className="text-xs text-muted-foreground">
               Found on the mod&apos;s Files tab on Nexusmods
-            </p>
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="map_game">Game</Label>
-            <Input
-              id="map_game"
-              placeholder="e.g. monsterhunterwilds"
-              value={formData.game}
-              onChange={(e) =>
-                setFormData({ ...formData, game: e.target.value })
-              }
-            />
-            <p className="text-xs text-muted-foreground">
-              The game slug from the Nexusmods URL
             </p>
           </div>
           <DialogFooter>

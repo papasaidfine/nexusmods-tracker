@@ -34,6 +34,7 @@ import {
   RefreshCwIcon,
   Trash2Icon,
 } from "lucide-react";
+import { useGame } from "@/hooks/use-game";
 
 function formatDate(dateStr: string | null) {
   if (!dateStr) return "—";
@@ -76,6 +77,7 @@ export default function ModDetailPage({
   const { id } = use(params);
   const modId = parseInt(id);
   const router = useRouter();
+  const game = useGame();
   const { mod, isLoading, isError, mutate } = useMod(modId);
   const [checking, setChecking] = useState(false);
   const [marking, setMarking] = useState(false);
@@ -85,7 +87,7 @@ export default function ModDetailPage({
   const handleMarkUpdated = async () => {
     setMarking(true);
     try {
-      await modsApi.markUpdated(modId);
+      await modsApi.markUpdated(game, modId);
       toast.success("Marked as updated");
       mutate();
     } catch (error) {
@@ -98,7 +100,7 @@ export default function ModDetailPage({
   const handleCheckUpdate = async () => {
     setChecking(true);
     try {
-      const result = await checkSingleUpdate(modId);
+      const result = await checkSingleUpdate(game, modId);
       if (result.update_available) {
         toast.success(`Update available: ${result.latest_version}`);
       } else {
@@ -117,9 +119,9 @@ export default function ModDetailPage({
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      await modsApi.delete(modId);
+      await modsApi.delete(game, modId);
       toast.success(`Deleted ${mod?.name || mod?.local_file}`);
-      router.push("/mods");
+      router.push(`/${game}/mods`);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to delete mod"
@@ -141,7 +143,7 @@ export default function ModDetailPage({
       <div className="flex flex-col items-center justify-center py-32 gap-4">
         <p className="text-destructive font-medium">Mod not found</p>
         <Button variant="outline" asChild>
-          <Link href="/mods">
+          <Link href={`/${game}/mods`}>
             <ArrowLeftIcon />
             Back to Mods
           </Link>
@@ -156,7 +158,7 @@ export default function ModDetailPage({
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" asChild>
-          <Link href="/mods">
+          <Link href={`/${game}/mods`}>
             <ArrowLeftIcon />
           </Link>
         </Button>

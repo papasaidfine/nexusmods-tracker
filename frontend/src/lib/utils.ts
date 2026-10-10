@@ -6,19 +6,6 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-/**
- * Open each URL in a new tab. Browsers only allow one popup per click unless
- * popups are allowed for this site, so returns the URLs that were blocked.
- */
-export function openUrlsInNewTabs(urls: string[]): string[] {
-  const blocked: string[] = []
-  for (const url of new Set(urls)) {
-    const win = window.open(url, "_blank")
-    if (!win) blocked.push(url)
-  }
-  return blocked
-}
-
 export interface BatchSchedule {
   batchSize: number
   /** Gap between tabs within a batch */

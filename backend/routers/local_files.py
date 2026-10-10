@@ -11,16 +11,15 @@ from database import get_all_mods, get_mod_by_file, update_mod
 from nexusmods_client import get_nexusmods_client
 from paths import mod_file_path
 import fluffy
+import games
 
 router = APIRouter()
 
 def get_mods_directory() -> str:
-    """Get mods directory from environment"""
-    mods_dir = os.getenv("MODS_DIR")
-    if not mods_dir:
-        raise HTTPException(status_code=500, detail="MODS_DIR not configured")
+    """The current game's Mods folder"""
+    mods_dir = games.current().mods_dir
     if not os.path.exists(mods_dir):
-        raise HTTPException(status_code=500, detail=f"MODS_DIR does not exist: {mods_dir}")
+        raise HTTPException(status_code=500, detail=f"Mods folder does not exist: {mods_dir}")
     return mods_dir
 
 @router.get("/", response_model=List[LocalFile])

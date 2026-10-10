@@ -3,12 +3,14 @@
  */
 import useSWR from "swr";
 import { localFilesApi } from "@/lib/api";
-import type { LocalFile, ScanResult } from "@/lib/types";
+import type { LocalFile } from "@/lib/types";
+import { useGame } from "./use-game";
 
 export function useLocalFiles() {
+  const game = useGame();
   const { data, error, isLoading, mutate } = useSWR<LocalFile[]>(
-    "/api/local-files",
-    localFilesApi.list,
+    game ? `/api/games/${game}/local-files` : null,
+    () => localFilesApi.list(game),
     {
       revalidateOnFocus: false,
       revalidateOnReconnect: true,
@@ -23,9 +25,9 @@ export function useLocalFiles() {
   };
 }
 
-export async function scanDirectory() {
+export async function scanDirectory(game: string) {
   try {
-    const result = await localFilesApi.scan();
+    const result = await localFilesApi.scan(game);
     return result;
   } catch (error) {
     throw error;

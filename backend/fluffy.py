@@ -18,9 +18,12 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional
 
+import games
+
 ENCODING = "latin-1"
 EXE_NAME = "Modmanager.exe"
 CACHE_MAGIC = b"MICH"
+CACHE_VERSION = 9  # older Fluffy (8) records neither archives nor mod IDs
 CACHE_STRING_FIELDS = 22
 CACHE_TAIL_SIZE = 43
 PRESET_PREFIX = "TrackerUpdate"
@@ -50,12 +53,13 @@ class FluffyError(Exception):
     pass
 
 
+class UnsupportedCache(FluffyError):
+    pass
+
+
 def game_dir() -> str:
-    """Fluffy's per-game folder (parent of MODS_DIR)."""
-    mods_dir = os.getenv("MODS_DIR", "")
-    if not mods_dir:
-        raise FluffyError("MODS_DIR not configured")
-    return os.path.dirname(os.path.normpath(mods_dir))
+    """Fluffy's folder for the current game (parent of its Mods folder)."""
+    return games.current().fluffy_game_dir
 
 
 def fluffy_root() -> str:
@@ -118,6 +122,9 @@ def read_cache(path: Optional[str] = None) -> List[CachedOption]:
         data = f.read()
     if data[4:8] != CACHE_MAGIC:
         raise FluffyError("Unrecognized ModinfoCache.bin format")
+    (version,) = struct.unpack_from("<I", data, 0)
+    if version != CACHE_VERSION:
+        raise UnsupportedCache(f"ModinfoCache.bin version {version} is not supported; update Fluffy Mod Manager")
     (count,) = struct.unpack_from("<I", data, 8)
     pos = 12
     options: List[CachedOption] = []
@@ -150,6 +157,8 @@ def read_cache_with_retry(attempts: int = 5) -> List[CachedOption]:
     for i in range(attempts):
         try:
             return read_cache()
+        except UnsupportedCache:
+            raise
         except (FluffyError, OSError):
             if i == attempts - 1:
                 raise

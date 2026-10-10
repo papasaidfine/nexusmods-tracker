@@ -14,6 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { cn, parseServerDate } from "@/lib/utils";
 import type { Mod } from "@/lib/types";
+import { useGame } from "@/hooks/use-game";
 
 interface RecentUpdatesProps {
   mods: Mod[] | undefined;
@@ -21,6 +22,7 @@ interface RecentUpdatesProps {
 }
 
 export function RecentUpdates({ mods, isLoading }: RecentUpdatesProps) {
+  const game = useGame();
   const modsWithUpdates = mods?.filter((m) => m.update_available) ?? [];
   const recentlyChecked = mods
     ?.filter((m) => m.last_checked)
@@ -79,7 +81,7 @@ export function RecentUpdates({ mods, isLoading }: RecentUpdatesProps) {
               >
                 <div className="min-w-0 flex-1">
                   <Link
-                    href={`/mods/${mod.id}`}
+                    href={`/${game}/mods/${mod.id}`}
                     className="text-sm font-medium hover:underline"
                   >
                     {mod.name || mod.local_file}
@@ -142,7 +144,7 @@ export function RecentUpdates({ mods, isLoading }: RecentUpdatesProps) {
                   <div className="flex items-center gap-2 min-w-0">
                     <Clock className="size-3.5 shrink-0 text-muted-foreground" />
                     <Link
-                      href={`/mods/${mod.id}`}
+                      href={`/${game}/mods/${mod.id}`}
                       className="truncate hover:underline"
                     >
                       {mod.name || mod.local_file}

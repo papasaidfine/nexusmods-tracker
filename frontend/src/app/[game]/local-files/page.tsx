@@ -21,8 +21,10 @@ import {
   LinkIcon,
   CircleDotIcon,
 } from "lucide-react";
+import { useGame } from "@/hooks/use-game";
 
 export default function LocalFilesPage() {
+  const game = useGame();
   const { files, isLoading, isError, mutate: mutateFiles } = useLocalFiles();
   const { mods, mutate: mutateMods } = useMods();
   const [scanning, setScanning] = useState(false);
@@ -30,7 +32,7 @@ export default function LocalFilesPage() {
   const handleScan = async () => {
     setScanning(true);
     try {
-      const result = await scanDirectory();
+      const result = await scanDirectory(game);
       toast.success(
         `Scan complete: ${result.total_files} files found (${result.mapped_files} mapped, ${result.unmapped_files} unmapped)`
       );

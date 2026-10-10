@@ -55,10 +55,29 @@ Open **http://localhost:3000**
 
 ```env
 NEXUSMODS_API_KEY=your_api_key_here
-MODS_DIR=/path/to/your/mods/folder
-# Optional: browser download folder; downloaded updates are moved into MODS_DIR
+# Optional: browser download folder; downloaded updates are moved into the game's Mods folder
 DOWNLOADS_DIR=/path/to/your/downloads
 ```
+
+### Games (`backend/games.json`)
+
+Every page except Settings is per game; pick the game in the sidebar. Each game is one Fluffy
+game folder (`<Fluffy>/Games/<Game>`), which holds its `Mods` folder, Fluffy's state and the
+tracker database. `id` is the game's Nexusmods domain (see `backend/games.example.json`):
+
+```json
+[
+  {
+    "id": "monsterhunterwilds",
+    "name": "Monster Hunter Wilds",
+    "fluffy_game_dir": "/mnt/d/Games/mods/MHWilds/modmanager/Games/MonsterHunterWilds"
+  }
+]
+```
+
+Without `games.json`, `MODS_DIR` (Fluffy's `Games/<Game>/Mods` folder) and `GAME` define a
+single game. Fluffy features need a current Fluffy (its `ModinfoCache.bin` version 9); for a game
+managed by an older Fluffy, mods are still tracked and checked for updates.
 
 ## Auto-downloading updates
 
@@ -76,7 +95,7 @@ personal use.
 
 ## Updating mods in Fluffy Mod Manager
 
-`MODS_DIR` is Fluffy's `Games/<Game>/Mods` folder. On the Mods page, **Update in Fluffy**
+On the Mods page, **Update in Fluffy**
 swaps downloaded updates into Fluffy while keeping the options you had installed:
 
 1. The tracker reads `installed.ini` and `ModinfoCache.bin`, matches each installed option to
@@ -88,10 +107,27 @@ swaps downloaded updates into Fluffy while keeping the options you had installed
 3. Once `installed.ini` shows the swap, the tracker records the new version, deletes the old
    archive and removes the presets.
 
+## Armor (Monster Hunter Wilds)
+
+The **Armor** page shows which installed Fluffy options replace which armor, so you don't have
+to check in game. It reads `installed.ini` and sorts each option's files into armor slots:
+`natives/stm/art/model/character/<ch02 male|ch03 female>/<model>/<variant>/<part>/`.
+
+- **Model** names come from `backend/data/mhwilds_armor.json` (armor series and their model
+  IDs, from the [MHDB](https://github.com/LartTyler/mhdb-wilds-data) game data dump). After a
+  title update adds armor, refresh it with `uv run python scripts/fetch_mhwilds_armor.py`.
+- **Variant**: the first two digits pick a look of the model (Arkveld α/β, γ and Guardian
+  Arkveld are all model 032), the last one the design (0 male, 1 female). There is no public
+  mapping from looks to series, so click a look to name it.
+- **Parts** 1-6: arms, body, helm, legs, waist, slinger.
+
+In a slot, the option installed last wins each shared file: the bold option is the look in
+game, an amber dot means some of the option's files were overwritten, struck-through means all.
+
 | Variable | Description |
 |----------|-------------|
 | `NEXUSMODS_API_KEY` | From nexusmods.com → Account → API Keys |
-| `MODS_DIR` | Absolute path to your local mods folder |
+| `DOWNLOADS_DIR` | Browser download folder (optional) |
 
 ## Features
 
@@ -108,10 +144,12 @@ Next.js 15 (App Router) with TypeScript, Tailwind CSS, shadcn/ui, and SWR for da
 
 | Route | Description |
 |-------|-------------|
-| `/` | Dashboard — stats, mods with updates, quick actions |
-| `/mods` | All tracked mods with sortable table |
-| `/mods/[id]` | Mod detail — full metadata, update status, actions |
-| `/local-files` | Scan mods directory, map unmapped files |
+| `/` | Opens the last used game |
+| `/[game]` | Dashboard — stats, mods with updates, quick actions |
+| `/[game]/mods` | All tracked mods with sortable table |
+| `/[game]/mods/[id]` | Mod detail — full metadata, update status, actions |
+| `/[game]/armor` | Which installed options replace which armor (MH Wilds) |
+| `/[game]/local-files` | Scan mods directory, map unmapped files |
 | `/settings` | Configuration display |
 
 ## Backend
@@ -137,6 +175,10 @@ backend/
 
 Interactive docs at **http://localhost:8000/docs**
 
+`GET /api/games` lists the configured games. All other endpoints except the Nexusmods
+passthrough are per game, under `/api/games/{game}` (e.g. `/api/games/monsterhunterwilds/mods`);
+the paths below omit that prefix.
+
 #### Mods
 
 | Method | Path | Description |
@@ -161,7 +203,7 @@ Interactive docs at **http://localhost:8000/docs**
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/local-files` | List `.zip`/`.rar`/`.7z` files in MODS_DIR |
+| `GET` | `/api/local-files` | List `.zip`/`.rar`/`.7z` files in the game's Mods folder |
 | `POST` | `/api/local-files/scan` | Scan directory, return mapped/unmapped stats |
 
 #### Updates
@@ -183,7 +225,7 @@ After checking, `latest_file_id` and `latest_version` are persisted to the datab
 
 ### Database Schema
 
-SQLite database at `{parent of MODS_DIR}/nexusmods_tracker.db`.
+One SQLite database per game, at `<fluffy_game_dir>/nexusmods_tracker.db`.
 
 ```sql
 CREATE TABLE mods (
@@ -213,7 +255,7 @@ CREATE TABLE mods (
 **Database location:**
 ```
 /path/to/MonsterHunterWilds/
-├── Mods/                       ← MODS_DIR
+├── Mods/                       ← the game's Mods folder
 │   ├── Gore Magala ....zip
 │   └── ...
 └── nexusmods_tracker.db        ← database lives here
@@ -232,7 +274,7 @@ CREATE TABLE mods (
 
 **"NEXUSMODS_API_KEY not found"** — Ensure `.env` exists in the project root with a valid key.
 
-**"MODS_DIR does not exist"** — Check the path in `.env` points to a valid directory.
+**"Mods folder does not exist"** — Check the game's `fluffy_game_dir` in `backend/games.json`.
 
 **Database locked** — Only one backend instance should be running. Stop with `pkill -f uvicorn`.
 
